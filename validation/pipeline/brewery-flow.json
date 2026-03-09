@@ -1,0 +1,170 @@
+[
+  {
+    "id": "tab-sensors",
+    "type": "tab",
+    "label": "Sensores",
+    "disabled": false
+  },
+  {
+    "id": "mqtt-in-sensors",
+    "type": "mqtt in",
+    "z": "tab-sensors",
+    "name": "brewery/sensors",
+    "topic": "brewery/sensors",
+    "qos": "1",
+    "broker": "mqtt-broker-config",
+    "x": 120, "y": 80,
+    "wires": [["json-parse"]]
+  },
+  {
+    "id": "json-parse",
+    "type": "json",
+    "z": "tab-sensors",
+    "name": "Parse JSON",
+    "x": 320, "y": 80,
+    "wires": [["fn-transform"]]
+  },
+  {
+    "id": "fn-transform",
+    "type": "function",
+    "z": "tab-sensors",
+    "name": "Transformar + KPIs",
+    "func": "const d = msg.payload;\nconst tempMin = parseInt(env.get('TEMP_MIN') || 15);\nconst tempMax = parseInt(env.get('TEMP_MAX') || 22);\nconst meta    = parseFloat(env.get('VOLUME_META_LITROS') || 50);\n\nif (isNaN(d.temperature_c) || isNaN(d.humidity_pct)) {\n    node.warn('Leitura invalida descartada');\n    node.send([null, { payload: {\n        timestamp: new Date(),\n        level: 'WARN',\n        service: 'node-red',\n        message: 'Leitura invalida descartada (NaN)',\n        device_id: d.device_id || 'unknown'\n    }}]);\n    return null;\n}\n\nconst rendimento = parseFloat(((d.volume_liters / meta) * 100).toFixed(2));\nconst lossPct    = parseFloat((100 - rendimento).toFixed(2));\nconst stock      = parseFloat((d.volume_liters * 0.92).toFixed(2));\n\nmsg.payload = {\n    ...d,\n    collected_at:   new Date(),\n    temp_status:    (d.temperature_c >= tempMin && d.temperature_c <= tempMax) ? 'OK' : 'ALERTA',\n    rendimento_pct: rendimento,\n    loss_pct:       lossPct,\n    stock_liters:   stock\n};\n\nreturn [msg, null];",
+    "outputs": 2,
+    "x": 520, "y": 80,
+    "wires": [["mongo-sensor"], ["mongo-eventlog"]]
+  },
+  {
+    "id": "mongo-sensor",
+    "type": "mongodb out",
+    "z": "tab-sensors",
+    "name": "sensor_readings",
+    "collection": "sensor_readings",
+    "payonly": true,
+    "service": "mongo-service-config",
+    "x": 760, "y": 60,
+    "wires": []
+  },
+  {
+    "id": "mongo-eventlog",
+    "type": "mongodb out",
+    "z": "tab-sensors",
+    "name": "event_logs",
+    "collection": "event_logs",
+    "payonly": true,
+    "service": "mongo-service-config",
+    "x": 760, "y": 120,
+    "wires": []
+  },
+  {
+    "id": "catch-all",
+    "type": "catch",
+    "z": "tab-sensors",
+    "name": "Catch Errors",
+    "x": 120, "y": 200,
+    "wires": [["fn-error-log"]]
+  },
+  {
+    "id": "fn-error-log",
+    "type": "function",
+    "z": "tab-sensors",
+    "name": "Formatar erro",
+    "func": "msg.payload = {\n    timestamp: new Date(),\n    level: 'ERROR',\n    service: 'node-red',\n    message: msg.error.message,\n    stack: msg.error.source\n};\nreturn msg;",
+    "x": 320, "y": 200,
+    "wires": [["mongo-eventlog"]]
+  },
+  {
+    "id": "tab-health",
+    "type": "tab",
+    "label": "Healthcheck",
+    "disabled": false
+  },
+  {
+    "id": "inject-health",
+    "type": "inject",
+    "z": "tab-health",
+    "name": "Tick 30s",
+    "repeat": "30",
+    "once": true,
+    "x": 120, "y": 80,
+    "wires": [["http-nodered", "http-grafana", "fn-mongo-check"]]
+  },
+  {
+    "id": "http-nodered",
+    "type": "http request",
+    "z": "tab-health",
+    "name": "Check Node-RED",
+    "method": "GET",
+    "url": "http://localhost:1880/",
+    "ret": "txt",
+    "x": 340, "y": 60,
+    "wires": [["fn-health-nodered"]]
+  },
+  {
+    "id": "fn-health-nodered",
+    "type": "function",
+    "z": "tab-health",
+    "name": "Parse Node-RED",
+    "func": "msg.payload = {\n    collected_at: new Date(),\n    type: 'service',\n    name: 'node-red',\n    status: msg.statusCode === 200 ? 'up' : 'down',\n    latency_ms: msg.responseTime || 0\n};\nreturn msg;",
+    "x": 560, "y": 60,
+    "wires": [["mongo-health"]]
+  },
+  {
+    "id": "http-grafana",
+    "type": "http request",
+    "z": "tab-health",
+    "name": "Check Grafana",
+    "method": "GET",
+    "url": "http://grafana:3000/api/health",
+    "ret": "obj",
+    "x": 340, "y": 120,
+    "wires": [["fn-health-grafana"]]
+  },
+  {
+    "id": "fn-health-grafana",
+    "type": "function",
+    "z": "tab-health",
+    "name": "Parse Grafana",
+    "func": "msg.payload = {\n    collected_at: new Date(),\n    type: 'service',\n    name: 'grafana',\n    status: msg.statusCode === 200 ? 'up' : 'down',\n    latency_ms: msg.responseTime || 0\n};\nreturn msg;",
+    "x": 560, "y": 120,
+    "wires": [["mongo-health"]]
+  },
+  {
+    "id": "fn-mongo-check",
+    "type": "function",
+    "z": "tab-health",
+    "name": "Check ESP32 last seen",
+    "func": "const lastSeen = global.get('esp32_last_seen') || 0;\nconst secAgo   = Math.floor((Date.now() - lastSeen) / 1000);\nconst timeout  = parseInt(env.get('SENSOR_TIMEOUT_SECONDS') || 120);\n\nmsg.payload = {\n    collected_at: new Date(),\n    type: 'sensor',\n    name: 'esp32-brewery-01',\n    status: secAgo < timeout ? 'up' : 'down',\n    seconds_since_last_ping: secAgo\n};\nreturn msg;",
+    "x": 340, "y": 180,
+    "wires": [["mongo-health"]]
+  },
+  {
+    "id": "mongo-health",
+    "type": "mongodb out",
+    "z": "tab-health",
+    "name": "health_logs",
+    "collection": "health_logs",
+    "payonly": true,
+    "service": "mongo-service-config",
+    "x": 780, "y": 120,
+    "wires": []
+  },
+  {
+    "id": "mqtt-broker-config",
+    "type": "mqtt-broker",
+    "name": "Mosquitto Local",
+    "broker": "mosquitto",
+    "port": "1883",
+    "clientid": "nodered-brewery",
+    "keepalive": "60",
+    "cleansession": true
+  },
+  {
+    "id": "mongo-service-config",
+    "type": "mongodb",
+    "hostname": "mongodb",
+    "port": "27017",
+    "db": "brewery",
+    "name": "Brewery DB"
+  }
+]

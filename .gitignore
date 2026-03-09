@@ -1,0 +1,21 @@
+# Ambiente
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node
+node_modules/
+
+# PlatformIO
+firmware/.pio/
+firmware/.pioenvs/
+
+# Docker
+*.log
+
+# Sistema
+.DS_Store
+Thumbs.db
