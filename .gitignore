@@ -1,0 +1,31 @@
+# Segredos — NUNCA versionar
+.env
+*.env
+
+# Credenciais Google Service Account
+node-red/data/credentials/*.json
+credentials/
+
+# Senhas Mosquitto geradas
+mosquitto/config/passwd
+
+# Node-RED — flows com credenciais embarcadas
+node-red/data/.config.runtime.json
+node-red/data/.config.users.json
+
+# Dados locais e buffers
+node-red/data/buffer.csv
+data/
+
+# Docker
+docker-compose.override.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
