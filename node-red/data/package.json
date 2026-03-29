@@ -1,0 +1,9 @@
+{
+    "name": "brewery-iot-nodered",
+    "description": "Node-RED — Brewery IoT DS18B20 Pipeline",
+    "version": "1.0.0",
+    "private": true,
+    "dependencies": {
+        "node-red-contrib-google-sheets": "^2.0.4"
+    }
+}

@@ -1,0 +1,10 @@
+# Dependências para rodar sem Docker (Python 3.10+)
+# Instale com: pip install -r requirements.txt
+
+paho-mqtt==1.6.1          # cliente MQTT para scripts utilitários
+python-dotenv==1.0.1       # leitura do .env
+gspread==6.1.2             # integração Google Sheets
+google-auth==2.29.0        # autenticação Google Service Account
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.0
+requests==2.31.0

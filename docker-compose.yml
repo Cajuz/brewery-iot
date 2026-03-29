@@ -1,0 +1,70 @@
+# ─────────────────────────────────────────────────────────────────
+#  BREWERY IoT — docker-compose.yml
+#  Serviços: Mosquitto (MQTT Broker) + Node-RED (ETL)
+#  Uso: docker compose up -d
+# ─────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Broker MQTT ───────────────────────────────────────────────
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: brewery_mosquitto
+    restart: unless-stopped
+    ports:
+      - "${MQTT_BROKER_PORT:-1883}:1883"   # TCP (ESP32 + Node-RED)
+      - "${MQTT_WS_PORT:-9001}:9001"       # WebSocket (opcional)
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-u", "${MQTT_NODERED_USER}", "-P", "${MQTT_NODERED_PASSWORD}", "--quiet"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - brewery_net
+
+  # ── Node-RED (ETL + integração Google Sheets) ─────────────────
+  nodered:
+    image: nodered/node-red:3.1
+    container_name: brewery_nodered
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    ports:
+      - "${NODERED_PORT:-1880}:1880"
+    environment:
+      - TZ=America/Sao_Paulo
+      - MQTT_BROKER_HOST=mosquitto          # nome do serviço interno
+      - MQTT_BROKER_PORT=${MQTT_BROKER_PORT:-1883}
+      - MQTT_NODERED_USER=${MQTT_NODERED_USER}
+      - MQTT_NODERED_PASSWORD=${MQTT_NODERED_PASSWORD}
+      - MQTT_TOPIC_TEMPERATURE=${MQTT_TOPIC_TEMPERATURE}
+      - GOOGLE_SHEET_ID=${GOOGLE_SHEET_ID}
+      - GOOGLE_CREDENTIALS_PATH=${GOOGLE_CREDENTIALS_PATH}
+      - SHEET_SENSOR_READINGS=${SHEET_SENSOR_READINGS}
+      - SHEET_EVENT_LOGS=${SHEET_EVENT_LOGS}
+      - SHEET_HEALTH_LOGS=${SHEET_HEALTH_LOGS}
+      - QUEUE_MAX_SIZE=${QUEUE_MAX_SIZE:-500}
+      - RETRY_DELAY_SECONDS=${RETRY_DELAY_SECONDS:-60}
+      - RETRY_MAX_ATTEMPTS=${RETRY_MAX_ATTEMPTS:-5}
+      - CSV_BUFFER_PATH=${CSV_BUFFER_PATH:-/data/buffer.csv}
+    volumes:
+      - ./node-red/flows:/data/flows
+      - ./node-red/data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1880"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - brewery_net
+
+networks:
+  brewery_net:
+    driver: bridge
