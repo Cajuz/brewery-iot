@@ -83,7 +83,7 @@ def main():
     time.sleep(1)
 
     payload = {
-        "temperature": 23.5,
+        "temperature": 57.5,
         "unit": "C",
         "device_id": "esp32_test"
     }
