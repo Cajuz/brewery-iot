@@ -229,7 +229,13 @@ cp ~/Downloads/brewery-iot-abc123.json node-red/data/credentials/service-account
 ### 3.6 — Criar a planilha e compartilhar
 
 1. Acesse https://sheets.google.com → crie uma nova planilha
-2. Nomeie a primeira aba como `sensor_readings`
+2. **⚠️ Renomeie a aba padrão "Página1" (ou "Sheet1") para `sensor_readings`:**
+   - Clique duas vezes no nome da aba na parte inferior da tela
+   - Apague o nome atual e digite exatamente `sensor_readings`
+   - Pressione **Enter** para confirmar
+
+   > ⚠️ **Atenção:** O nome da aba deve ser exatamente `sensor_readings` (sem maiúsculas, sem espaços, sem acentos). O Node-RED usa esse nome para saber onde gravar os dados. Se estiver errado, a gravação falhará silenciosamente.
+
 3. Copie o ID da planilha da URL e cole no `.env` no campo `SHEETS_SPREADSHEET_ID`
 4. Clique em **Share** (Compartilhar)
 5. No campo de e-mail, cole o `client_email` do JSON da Service Account
@@ -254,17 +260,20 @@ bash scripts/setup_mosquitto_users.sh
 ### No Windows (PowerShell):
 
 ```powershell
-# Execute via Docker diretamente
+# Primeiro usuário — flag -c CRIA o arquivo
 docker run --rm -v "${PWD}/mosquitto/config:/mosquitto/config" `
   eclipse-mosquitto:2.0 `
-  mosquitto_passwd -b /mosquitto/config/passwd esp32 SUA_SENHA_ESP32
+  mosquitto_passwd -b -c /mosquitto/config/passwd esp32 SUA_SENHA_ESP32
 
+# Segundo usuário — sem -c, apenas ADICIONA ao arquivo existente
 docker run --rm -v "${PWD}/mosquitto/config:/mosquitto/config" `
   eclipse-mosquitto:2.0 `
   mosquitto_passwd -b /mosquitto/config/passwd nodered SUA_SENHA_NODERED
 ```
 
-Substitua `SUA_SENHA_ESP32` e `SUA_SENHA_NODERED` pelas mesmas senhas do `.env`.
+> ⚠️ **Importante:** Use `-c` apenas no primeiro comando. O `-c` cria o arquivo do zero — se usado no segundo comando, apaga o primeiro usuário.
+
+Substitua `SUA_SENHA_ESP32` e `SUA_SENHA_NODERED` pelas mesmas senhas do `.env`. Use senhas simples **sem caracteres especiais** (`!`, `@`, `#`) para evitar problemas de escape no PowerShell.
 
 Verifique que o arquivo foi criado:
 
@@ -317,7 +326,16 @@ Abra o browser em: **http://localhost:1880**
 
 Faça login com `NODERED_ADMIN_USER` e `NODERED_ADMIN_PASSWORD` definidos no `.env`.
 
-### 6.2 — Importar o flow
+### 6.2 — Instalar o pacote Google Sheets
+
+Antes de importar o flow, instale o pacote necessário:
+
+1. Clique no ≡ (menu hambúrguer) → **Gerenciar paleta**
+2. Vá na aba **Instalar**
+3. Pesquise `node-red-contrib-google-sheets-advance`
+4. Clique **Instalar** e aguarde 1-2 minutos
+
+### 6.3 — Importar o flow
 
 1. No canto superior direito, clique no ≡ (menu hambúrguer)
 2. Clique em **Import**
@@ -333,21 +351,46 @@ Você verá o flow `Brewery IoT` aparecer na tela com os nós conectados.
 
 ### 7.1 — Abrir as configurações do nó Sheets
 
-1. No flow importado, clique duas vezes no nó **`sensor_readings`** (laranja/verde, no meio do flow)
-2. Na janela que abrir, clique no ícone de lápis ✏️ ao lado do campo **Credentials** ou **Auth**
+1. No flow importado, clique duas vezes no nó **`sensor_readings`** (verde, no meio do flow)
+2. Na janela que abrir, clique no ícone de lápis ✏️ ao lado do campo **Credentials**
 
-### 7.2 — Colar o JSON da Service Account
+### 7.2 — Preencher os campos da Service Account
 
-1. Abra o arquivo `node-red/data/credentials/service-account.json` em qualquer editor de texto
-2. Copie o conteúdo **completo** (todo o JSON, do `{` até o `}` final)
-3. Cole no campo de credenciais da janela que abriu no Node-RED
+Abra o arquivo `node-red/data/credentials/service-account.json` e copie os valores para os campos correspondentes:
+
+```powershell
+# No PowerShell, para ver o conteúdo formatado:
+$json = Get-Content "node-red\data\credentials\service-account.json" | ConvertFrom-Json
+$json.project_id
+$json.client_email
+$json.private_key
+```
+
+| Campo no Node-RED | Campo no JSON |
+|---|---|
+| `project_id` | `"project_id"` |
+| `private_key` | `"private_key"` (incluindo `-----BEGIN PRIVATE KEY-----`) |
+| `client_email` | `"client_email"` |
+
+> ⚠️ **Atenção:** A chave deve começar com `-----BEGIN PRIVATE KEY-----` (sem `RSA`). Se começar com `-----BEGIN RSA PRIVATE KEY-----`, gere uma nova chave no Google Cloud Console.
+
 4. Clique **Update** → **Done**
 
-### 7.3 — Fazer Deploy
+### 7.3 — Configurar o broker MQTT no nó DS18B20
 
-Clique no botão vermelho **Deploy** no canto superior direito.
+1. Clique duas vezes no nó **DS18B20** (roxo, à esquerda)
+2. Clique no lápis ✏️ ao lado do campo **Servidor**
+3. Na aba **Conexão**, preencha **Servidor** com `mosquitto`
+4. Na aba **Segurança**, preencha:
+   - **Usuário:** `nodered`
+   - **Senha:** a senha definida no Passo 4
+5. Clique **Atualizar** → **Done**
 
-Você deve ver a mensagem `Successfully deployed` e os nós mostrando badges de status.
+### 7.4 — Fazer Deploy
+
+Clique no botão vermelho **Implementar** no canto superior direito.
+
+Você deve ver a mensagem `Implementado com sucesso` e o nó DS18B20 mostrando **"conectado"**.
 
 ---
 
@@ -388,20 +431,19 @@ A saída deve ser:
 ✅ Teste concluído! 1 mensagem(ns) recebida(s).
 ```
 
-### Opção B — Linha de comando (sem Python)
+### Opção B — Linha de comando (PowerShell)
 
-```bash
-# Carregar variáveis do .env
-source .env
-
-# Publicar mensagem simulando o ESP32
-mosquitto_pub \
-  -h localhost -p 1883 \
-  -u esp32 -P $MQTT_ESP32_PASSWORD \
-  -t brewery/sensors/temperature \
-  -m '{"temperature":23.5,"unit":"C","device_id":"esp32_01"}' \
+```powershell
+$payload = '23.5'
+docker run --rm eclipse-mosquitto:2.0 mosquitto_pub `
+  -h host.docker.internal -p 1883 `
+  -u esp32 -P SUA_SENHA_ESP32 `
+  -t brewery/sensors/temperature `
+  -m $payload `
   -q 1
 ```
+
+> ⚠️ O flow espera receber **apenas o número** da temperatura (ex: `23.5`), não um objeto JSON completo.
 
 ### Verificar no Node-RED
 
@@ -428,21 +470,11 @@ O firmware do ESP32 é desenvolvido separadamente no Arduino IDE ou PlatformIO. 
 
 ### Formato do payload que o ESP32 deve publicar
 
-```json
-{
-  "temperature": 23.5,
-  "unit": "C",
-  "device_id": "esp32_01"
-}
+```
+23.5
 ```
 
-| Campo | Tipo | Obrigatório | Descrição |
-|---|---|---|---|
-| `temperature` | float | ✅ | Leitura do DS18B20 em °C |
-| `unit` | string | ✅ | Sempre `"C"` |
-| `device_id` | string | ✅ | ID único do dispositivo |
-
-> **Range válido:** −55°C a +125°C. Fora desse range, a leitura é descartada pelo Node-RED.
+> ⚠️ O flow espera receber **apenas o valor numérico** da temperatura, não um objeto JSON.
 
 ### Descobrir o IP da máquina host
 
@@ -462,9 +494,9 @@ ipconfig
 Após o teste, abra a planilha no Google Sheets.
 Na aba `sensor_readings`, uma nova linha deve aparecer:
 
-| timestamp | device_id | temperature_c | unit |
-|---|---|---|---|
-| 2026-04-20T21:30:00Z | esp32_test | 23.5 | C |
+| timestamp | temperature | sensor |
+|---|---|---|
+| 2026-04-20T21:30:00Z | 23.5 | DS18B20 |
 
 Se a linha não aparecer em até 30 segundos, veja a seção [Solução de problemas](#solução-de-problemas-comuns).
 
@@ -507,7 +539,6 @@ docker compose logs --tail=50
 **Causa:** o container subiu mas o health check falhou.
 
 ```bash
-# Ver detalhes do erro
 docker compose logs mosquitto
 docker compose logs nodered
 ```
@@ -520,10 +551,7 @@ Verifique se o arquivo `mosquitto/config/passwd` existe (Passo 4 não foi execut
 
 **Causa:** pacote npm não instalado.
 
-```bash
-docker compose exec nodered npm install node-red-contrib-google-sheets-advance
-docker compose restart nodered
-```
+Instale via **Gerenciar paleta** → aba **Instalar** → pesquise `node-red-contrib-google-sheets-advance` → clique **Instalar**.
 
 ---
 
@@ -537,11 +565,23 @@ docker compose restart nodered
 
 ---
 
-### ❌ Erro 401 no Google Sheets
+### ❌ Erro 401 / JWT authorization failed
 
-**Causa:** credenciais inválidas ou não coladas no Node-RED.
+**Causa:** chave privada em formato incorreto ou corrompida.
 
-Refaça o Passo 7 e confirme que o JSON completo foi colado no config node.
+1. Acesse o Google Cloud Console → Service Accounts → sua conta
+2. Aba **Keys** → **Add Key** → **Create new key** → **JSON**
+3. Substitua o arquivo `node-red/data/credentials/service-account.json`
+4. Reconfigure os campos no nó `sensor_readings` do Node-RED
+5. Adicione `NODE_OPTIONS=--openssl-legacy-provider` nas variáveis de ambiente do `docker-compose.yml`
+
+---
+
+### ❌ Dados não aparecem na planilha (fallback CSV)
+
+**Causa:** nome da aba da planilha incorreto.
+
+Verifique se a aba se chama exatamente `sensor_readings` (sem maiúsculas, sem espaços).
 
 ---
 
@@ -549,7 +589,7 @@ Refaça o Passo 7 e confirme que o JSON completo foi colado no config node.
 
 **Causa:** senha no `.env` não bate com o `mosquitto/config/passwd`.
 
-Refaça o Passo 4 com a mesma senha que está no `.env`.
+Refaça o Passo 4 com a mesma senha. Use senhas sem caracteres especiais no PowerShell.
 
 ---
 
