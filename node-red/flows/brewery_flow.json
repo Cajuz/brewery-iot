@@ -11,21 +11,25 @@
     "id": "cfg-mqtt",
     "type": "mqtt-broker",
     "name": "Mosquitto Docker",
-    "broker": "${MQTT_BROKER_HOST}",
-    "port": "${MQTT_BROKER_PORT}",
+    "broker": "mosquitto",
+    "port": "1883",
     "clientid": "nodered-brewery",
     "autoConnect": true,
     "usetls": false,
     "protocolVersion": "4",
     "keepalive": "60",
     "cleansession": false,
-    "credentials": {}
+    "credentials": {
+      "user": "nodered",
+      "password": "victoria321"
+    }
   },
 
   {
     "id": "cfg-gsa",
     "type": "google-service-account",
-    "name": "Service Account Brewery"
+    "name": "Service Account Brewery",
+    "keyFile": "/data/credentials/brewery-iot/service-account.json"
   },
 
   {
@@ -39,7 +43,11 @@
     "broker": "cfg-mqtt",
     "x": 130,
     "y": 100,
-    "wires": [["n-validate"]]
+    "wires": [
+      [
+        "n-validate"
+      ]
+    ]
   },
 
   {
@@ -51,7 +59,12 @@
     "outputs": 1,
     "x": 320,
     "y": 100,
-    "wires": [["n-queue-add", "n-dbg-valid"]]
+    "wires": [
+      [
+        "n-queue-add",
+        "n-dbg-valid"
+      ]
+    ]
   },
 
   {
@@ -63,7 +76,11 @@
     "outputs": 1,
     "x": 510,
     "y": 100,
-    "wires": [["n-sheets"]]
+    "wires": [
+      [
+        "n-sheets"
+      ]
+    ]
   },
 
   {
@@ -75,7 +92,12 @@
     "action": "append",
     "x": 710,
     "y": 100,
-    "wires": [["n-success", "n-dbg-sheets"]]
+    "wires": [
+      [
+        "n-success",
+        "n-dbg-sheets"
+      ]
+    ]
   },
 
   {
@@ -87,7 +109,9 @@
     "outputs": 1,
     "x": 930,
     "y": 60,
-    "wires": [[]]
+    "wires": [
+      []
+    ]
   },
 
   {
@@ -95,11 +119,17 @@
     "type": "catch",
     "z": "tab-brewery",
     "name": "Erro Sheets",
-    "scope": ["n-sheets"],
+    "scope": [
+      "n-sheets"
+    ],
     "uncaught": false,
     "x": 710,
     "y": 220,
-    "wires": [["n-retry"]]
+    "wires": [
+      [
+        "n-retry"
+      ]
+    ]
   },
 
   {
@@ -111,7 +141,14 @@
     "outputs": 2,
     "x": 930,
     "y": 220,
-    "wires": [["n-sheets"], ["n-csv"]]
+    "wires": [
+      [
+        "n-sheets"
+      ],
+      [
+        "n-csv"
+      ]
+    ]
   },
 
   {
@@ -127,7 +164,9 @@
     "encoding": "utf8",
     "x": 1140,
     "y": 260,
-    "wires": [[]]
+    "wires": [
+      []
+    ]
   },
 
   {
@@ -140,7 +179,9 @@
     "complete": "payload",
     "x": 320,
     "y": 200,
-    "wires": []
+    "wires": [
+      []
+    ]
   },
 
   {
@@ -153,6 +194,8 @@
     "complete": "payload",
     "x": 930,
     "y": 100,
-    "wires": []
+    "wires": [
+      []
+    ]
   }
 ]
