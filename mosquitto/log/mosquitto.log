@@ -8803,3 +8803,12 @@ To fix this, use `chmod 0700 /mosquitto/config/passwd`.
 1777039105: New connection from ::1:47562 on port 1883.
 1777039105: New client connected from ::1:47562 as auto-375A0620-8F92-083B-619F-19053E3681E1 (p2, c1, k60, u'nodered').
 1777039105: Client auto-375A0620-8F92-083B-619F-19053E3681E1 closed its connection.
+1777159823: mosquitto version 2.0.22 starting
+1777159823: Config loaded from /mosquitto/config/mosquitto.conf.
+1777159823: Opening ipv4 listen socket on port 1883.
+1777159823: Opening ipv6 listen socket on port 1883.
+1777159823: Opening websockets listen socket on port 9001.
+1777159823: mosquitto version 2.0.22 running
+1777159829: New connection from ::1:52304 on port 1883.
+1777159829: New client connected from ::1:52304 as auto-D31A20AB-5D1B-7043-2456-58D6471F8CB4 (p2, c1, k60, u'nodered').
+1777159829: Client auto-D31A20AB-5D1B-7043-2456-58D6471F8CB4 closed its connection.
