@@ -29,7 +29,7 @@
     "id": "cfg-gsa",
     "type": "google-service-account",
     "name": "Service Account Brewery",
-    "keyFile": "/data/credentials/brewery-iot/service-account.json"
+    "keyFile": "/data/credentials/service-account.json"
   },
 
   {
@@ -43,11 +43,7 @@
     "broker": "cfg-mqtt",
     "x": 130,
     "y": 100,
-    "wires": [
-      [
-        "n-validate"
-      ]
-    ]
+    "wires": [["n-validate"]]
   },
 
   {
@@ -55,15 +51,13 @@
     "type": "function",
     "z": "tab-brewery",
     "name": "Validar DS18B20",
-    "func": "const temp = parseFloat(msg.payload);\nconst MIN = parseFloat(env.get('SENSOR_TEMP_MIN') || '-55');\nconst MAX = parseFloat(env.get('SENSOR_TEMP_MAX') || '125');\n\nif (isNaN(temp) || temp < MIN || temp > MAX) {\n    node.warn('Leitura inválida: ' + msg.payload);\n    node.status({fill:'red', shape:'ring', text:'inválida: '+msg.payload});\n    return null;\n}\n\nconst ts  = new Date().toISOString();\nconst tab = env.get('SHEETS_TAB_READINGS') || 'sensor_readings';\n\nmsg.timestamp     = ts;\nmsg.temperature   = temp;\nmsg.payload       = [[ts, temp, 'DS18B20']];\nmsg.sheets_data   = [[ts, temp, 'DS18B20']];\nmsg.spreadsheetId = env.get('SHEETS_SPREADSHEET_ID');\nmsg.sheetName     = tab;\nmsg.range         = tab + '!A:C';\nmsg._attempts     = 0;\n\nnode.status({fill:'green', shape:'dot', text: temp + '°C'});\nreturn msg;",
-    "outputs": 1,
+    "func": "const temp = parseFloat(msg.payload);\nconst MIN = parseFloat(env.get('SENSOR_TEMP_MIN') || '-55');\nconst MAX = parseFloat(env.get('SENSOR_TEMP_MAX') || '125');\n\nif (isNaN(temp) || temp < MIN || temp > MAX) {\n    node.warn('Leitura inválida: ' + msg.payload);\n    node.status({fill:'red', shape:'ring', text:'inválida: '+msg.payload});\n    // ── dispara evento SENSOR_INVALID\n    const evMsg = {\n        payload: [[\n            new Date().toISOString(),\n            'SENSOR_INVALID',\n            'Valor fora do range: ' + msg.payload,\n            'n-validate'\n        ]],\n        spreadsheetId: env.get('SHEETS_SPREADSHEET_ID'),\n        sheetName: env.get('SHEETS_TAB_EVENTS') || 'event_logs',\n        range: (env.get('SHEETS_TAB_EVENTS') || 'event_logs') + '!A:D'\n    };\n    node.send([null, evMsg]);\n    return null;\n}\n\nconst ts  = new Date().toISOString();\nconst tab = env.get('SHEETS_TAB_READINGS') || 'sensor_readings';\n\n// salva última leitura válida no contexto global\nglobal.set('last_temp', temp);\nglobal.set('last_reading_ts', Date.now());\nglobal.set('total_readings', (global.get('total_readings') || 0) + 1);\n\nmsg.timestamp     = ts;\nmsg.temperature   = temp;\nmsg.payload       = [[ts, temp, 'DS18B20']];\nmsg.sheets_data   = [[ts, temp, 'DS18B20']];\nmsg.spreadsheetId = env.get('SHEETS_SPREADSHEET_ID');\nmsg.sheetName     = tab;\nmsg.range         = tab + '!A:C';\nmsg._attempts     = 0;\n\nnode.status({fill:'green', shape:'dot', text: temp + '°C'});\nreturn [msg, null];",
+    "outputs": 2,
     "x": 320,
     "y": 100,
     "wires": [
-      [
-        "n-queue-add",
-        "n-dbg-valid"
-      ]
+      ["n-queue-add", "n-dbg-valid"],
+      ["n-event-sheets"]
     ]
   },
 
@@ -72,14 +66,13 @@
     "type": "function",
     "z": "tab-brewery",
     "name": "Enfileirar",
-    "func": "const MAX_Q = parseInt(env.get('QUEUE_MAX_SIZE') || '500');\nconst queue  = flow.get('queue') || [];\n\nif (!msg._fromRetry) {\n    if (queue.length >= MAX_Q) {\n        node.warn('Fila cheia! Descartando: ' + msg.timestamp);\n        return null;\n    }\n    queue.push({\n        sheets_data:   msg.sheets_data,\n        timestamp:     msg.timestamp,\n        temperature:   msg.temperature,\n        spreadsheetId: msg.spreadsheetId,\n        sheetName:     msg.sheetName,\n        range:         msg.range,\n        attempts:      0\n    });\n    flow.set('queue', queue);\n}\n\nconst item = queue[0];\nif (!item) return null;\n\nmsg.sheets_data   = item.sheets_data;\nmsg.timestamp     = item.timestamp;\nmsg.temperature   = item.temperature;\nmsg.spreadsheetId = item.spreadsheetId;\nmsg.sheetName     = item.sheetName;\nmsg.range         = item.range;\nmsg._attempts     = item.attempts;\nmsg.payload       = item.sheets_data;\n\nnode.status({fill:'blue', shape:'ring', text:'fila: ' + queue.length});\nreturn msg;",
-    "outputs": 1,
+    "func": "const MAX_Q = parseInt(env.get('QUEUE_MAX_SIZE') || '500');\nconst queue  = flow.get('queue') || [];\n\nif (!msg._fromRetry) {\n    if (queue.length >= MAX_Q) {\n        node.warn('Fila cheia! Descartando: ' + msg.timestamp);\n        // ── dispara evento QUEUE_OVERFLOW\n        const evMsg = {\n            payload: [[\n                new Date().toISOString(),\n                'QUEUE_OVERFLOW',\n                'Fila cheia (' + MAX_Q + '). Leitura descartada: ' + msg.timestamp,\n                'n-queue-add'\n            ]],\n            spreadsheetId: env.get('SHEETS_SPREADSHEET_ID'),\n            sheetName: env.get('SHEETS_TAB_EVENTS') || 'event_logs',\n            range: (env.get('SHEETS_TAB_EVENTS') || 'event_logs') + '!A:D'\n        };\n        node.send([null, evMsg]);\n        return null;\n    }\n    queue.push({\n        sheets_data:   msg.sheets_data,\n        timestamp:     msg.timestamp,\n        temperature:   msg.temperature,\n        spreadsheetId: msg.spreadsheetId,\n        sheetName:     msg.sheetName,\n        range:         msg.range,\n        attempts:      0\n    });\n    flow.set('queue', queue);\n}\n\nconst item = queue[0];\nif (!item) return null;\n\nmsg.sheets_data   = item.sheets_data;\nmsg.timestamp     = item.timestamp;\nmsg.temperature   = item.temperature;\nmsg.spreadsheetId = item.spreadsheetId;\nmsg.sheetName     = item.sheetName;\nmsg.range         = item.range;\nmsg._attempts     = item.attempts;\nmsg.payload       = item.sheets_data;\n\nnode.status({fill:'blue', shape:'ring', text:'fila: ' + queue.length});\nreturn [msg, null];",
+    "outputs": 2,
     "x": 510,
     "y": 100,
     "wires": [
-      [
-        "n-sheets"
-      ]
+      ["n-sheets"],
+      ["n-event-sheets"]
     ]
   },
 
@@ -92,12 +85,7 @@
     "action": "append",
     "x": 710,
     "y": 100,
-    "wires": [
-      [
-        "n-success",
-        "n-dbg-sheets"
-      ]
-    ]
+    "wires": [["n-success", "n-dbg-sheets"]]
   },
 
   {
@@ -109,9 +97,7 @@
     "outputs": 1,
     "x": 930,
     "y": 60,
-    "wires": [
-      []
-    ]
+    "wires": [[]]
   },
 
   {
@@ -119,17 +105,11 @@
     "type": "catch",
     "z": "tab-brewery",
     "name": "Erro Sheets",
-    "scope": [
-      "n-sheets"
-    ],
+    "scope": ["n-sheets"],
     "uncaught": false,
     "x": 710,
     "y": 220,
-    "wires": [
-      [
-        "n-retry"
-      ]
-    ]
+    "wires": [["n-retry"]]
   },
 
   {
@@ -137,17 +117,14 @@
     "type": "function",
     "z": "tab-brewery",
     "name": "Retry / CSV Fallback",
-    "func": "const RETRY_MAX   = parseInt(env.get('RETRY_MAX_ATTEMPTS') || '5');\nconst RETRY_DELAY = parseInt(env.get('RETRY_DELAY_MS')      || '60000');\n\nconst queue = flow.get('queue') || [];\nconst item  = queue[0];\nif (!item) return null;\n\nitem.attempts = (item.attempts || 0) + 1;\nflow.set('queue', queue);\n\nif (item.attempts >= RETRY_MAX) {\n    node.warn('Fallback CSV: ' + item.timestamp + ' (tentativas: ' + item.attempts + ')');\n    queue.shift();\n    flow.set('queue', queue);\n    const csvLine = item.timestamp + ',' + item.temperature + ',DS18B20\\n';\n    const csvMsg  = {\n        payload:  csvLine,\n        filename: env.get('BUFFER_CSV_PATH') || '/data/buffer.csv'\n    };\n    node.status({fill:'red', shape:'ring', text:'CSV fallback | fila: ' + queue.length});\n    return [null, csvMsg];\n}\n\nconst retryMsg = {\n    payload:       item.sheets_data,\n    sheets_data:   item.sheets_data,\n    timestamp:     item.timestamp,\n    temperature:   item.temperature,\n    spreadsheetId: item.spreadsheetId,\n    sheetName:     item.sheetName,\n    range:         item.range,\n    _attempts:     item.attempts,\n    _fromRetry:    true\n};\nnode.status({fill:'yellow', shape:'ring', text:'retry ' + item.attempts + '/' + RETRY_MAX});\nsetTimeout(() => { node.send([retryMsg, null]); }, RETRY_DELAY);\nreturn null;",
-    "outputs": 2,
+    "func": "const RETRY_MAX   = parseInt(env.get('RETRY_MAX_ATTEMPTS') || '5');\nconst RETRY_DELAY = parseInt(env.get('RETRY_DELAY_MS')      || '60000');\n\nconst queue = flow.get('queue') || [];\nconst item  = queue[0];\nif (!item) return null;\n\nitem.attempts = (item.attempts || 0) + 1;\nflow.set('queue', queue);\nglobal.set('total_errors', (global.get('total_errors') || 0) + 1);\n\n// ── evento SHEETS_RETRY\nconst evRetry = {\n    payload: [[\n        new Date().toISOString(),\n        'SHEETS_RETRY',\n        'Tentativa ' + item.attempts + '/' + RETRY_MAX + ' | ' + item.timestamp,\n        'n-retry'\n    ]],\n    spreadsheetId: env.get('SHEETS_SPREADSHEET_ID'),\n    sheetName: env.get('SHEETS_TAB_EVENTS') || 'event_logs',\n    range: (env.get('SHEETS_TAB_EVENTS') || 'event_logs') + '!A:D'\n};\n\nif (item.attempts >= RETRY_MAX) {\n    node.warn('Fallback CSV: ' + item.timestamp + ' (tentativas: ' + item.attempts + ')');\n    queue.shift();\n    flow.set('queue', queue);\n\n    const csvLine = item.timestamp + ',' + item.temperature + ',DS18B20\\n';\n    const csvLines = (global.get('csv_buffer_lines') || 0) + 1;\n    global.set('csv_buffer_lines', csvLines);\n\n    const csvMsg = {\n        payload:  csvLine,\n        filename: env.get('BUFFER_CSV_PATH') || '/data/buffer.csv'\n    };\n\n    // ── evento SHEETS_FALLBACK_CSV\n    const evFallback = {\n        payload: [[\n            new Date().toISOString(),\n            'SHEETS_FALLBACK_CSV',\n            'Max tentativas atingido. Salvo em CSV. Leitura: ' + item.timestamp,\n            'n-retry'\n        ]],\n        spreadsheetId: env.get('SHEETS_SPREADSHEET_ID'),\n        sheetName: env.get('SHEETS_TAB_EVENTS') || 'event_logs',\n        range: (env.get('SHEETS_TAB_EVENTS') || 'event_logs') + '!A:D'\n    };\n\n    node.status({fill:'red', shape:'ring', text:'CSV fallback | fila: ' + queue.length});\n    node.send([null, csvMsg, evFallback]);\n    return null;\n}\n\nconst retryMsg = {\n    payload:       item.sheets_data,\n    sheets_data:   item.sheets_data,\n    timestamp:     item.timestamp,\n    temperature:   item.temperature,\n    spreadsheetId: item.spreadsheetId,\n    sheetName:     item.sheetName,\n    range:         item.range,\n    _attempts:     item.attempts,\n    _fromRetry:    true\n};\nnode.status({fill:'yellow', shape:'ring', text:'retry ' + item.attempts + '/' + RETRY_MAX});\nsetTimeout(() => { node.send([retryMsg, null, evRetry]); }, RETRY_DELAY);\nreturn null;",
+    "outputs": 3,
     "x": 930,
     "y": 220,
     "wires": [
-      [
-        "n-sheets"
-      ],
-      [
-        "n-csv"
-      ]
+      ["n-sheets"],
+      ["n-csv"],
+      ["n-event-sheets"]
     ]
   },
 
@@ -164,9 +141,7 @@
     "encoding": "utf8",
     "x": 1140,
     "y": 260,
-    "wires": [
-      []
-    ]
+    "wires": [[]]
   },
 
   {
@@ -179,9 +154,7 @@
     "complete": "payload",
     "x": 320,
     "y": 200,
-    "wires": [
-      []
-    ]
+    "wires": []
   },
 
   {
@@ -194,8 +167,107 @@
     "complete": "payload",
     "x": 930,
     "y": 100,
-    "wires": [
-      []
-    ]
+    "wires": []
+  },
+  {
+    "id": "n-mqtt-status",
+    "type": "status",
+    "z": "tab-brewery",
+    "name": "Status MQTT",
+    "scope": ["n-mqtt-in"],
+    "x": 130,
+    "y": 380,
+    "wires": [["n-format-event"]]
+  },
+
+  {
+    "id": "n-format-event",
+    "type": "function",
+    "z": "tab-brewery",
+    "name": "Formatar Evento MQTT",
+    "func": "const ts = new Date().toISOString();\nconst status = msg.status || {};\nconst fill   = status.fill  || 'grey';\nconst text   = status.text  || '';\n\nlet eventType = 'MQTT_STATUS';\nif (fill === 'green' || text.toLowerCase().includes('connect')) {\n    eventType = 'MQTT_CONNECTED';\n} else if (fill === 'red' || text.toLowerCase().includes('disconnect') || text.toLowerCase().includes('error')) {\n    eventType = 'MQTT_DISCONNECTED';\n}\n\nmsg.payload = [[\n    ts,\n    eventType,\n    text || 'Status: ' + fill,\n    'mqtt-broker'\n]];\nmsg.spreadsheetId = env.get('SHEETS_SPREADSHEET_ID');\nmsg.sheetName     = env.get('SHEETS_TAB_EVENTS') || 'event_logs';\nmsg.range         = (env.get('SHEETS_TAB_EVENTS') || 'event_logs') + '!A:D';\n\nreturn msg;",
+    "outputs": 1,
+    "x": 340,
+    "y": 380,
+    "wires": [["n-event-sheets"]]
+  },
+
+  {
+    "id": "n-event-sheets",
+    "type": "google-spreadsheet",
+    "z": "tab-brewery",
+    "name": "event_logs",
+    "auth": "cfg-gsa",
+    "action": "append",
+    "x": 600,
+    "y": 380,
+    "wires": [["n-dbg-events"]]
+  },
+
+  {
+    "id": "n-dbg-events",
+    "type": "debug",
+    "z": "tab-brewery",
+    "name": "Event OK",
+    "active": true,
+    "tosidebar": true,
+    "complete": "payload",
+    "x": 780,
+    "y": 380,
+    "wires": []
+  },
+  
+  {
+    "id": "n-health-inject",
+    "type": "inject",
+    "z": "tab-brewery",
+    "name": "Heartbeat 5min",
+    "repeat": "300",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "10",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 130,
+    "y": 520,
+    "wires": [["n-health-check"]]
+  },
+
+  {
+    "id": "n-health-check",
+    "type": "function",
+    "z": "tab-brewery",
+    "name": "Health Check",
+    "func": "const ts             = new Date().toISOString();\nconst queue          = flow.get('queue') || [];\nconst lastTemp       = global.get('last_temp')        || null;\nconst lastReadingTs  = global.get('last_reading_ts')  || null;\nconst totalReadings  = global.get('total_readings')   || 0;\nconst totalErrors    = global.get('total_errors')     || 0;\nconst csvLines       = global.get('csv_buffer_lines') || 0;\n\n// segundos desde a última leitura válida\nconst ageSeconds = lastReadingTs\n    ? Math.floor((Date.now() - lastReadingTs) / 1000)\n    : null;\n\n// status do broker via contexto do nó mqtt-in\nconst brokerStatus = (ageSeconds !== null && ageSeconds < 120)\n    ? 'connected'\n    : 'unknown';\n\nmsg.payload = [[\n    ts,\n    queue.length,\n    lastTemp !== null ? lastTemp : 'N/A',\n    ageSeconds !== null ? ageSeconds : 'N/A',\n    brokerStatus,\n    totalReadings,\n    totalErrors,\n    csvLines\n]];\n\nmsg.spreadsheetId = env.get('SHEETS_SPREADSHEET_ID');\nmsg.sheetName     = env.get('SHEETS_TAB_HEALTH') || 'health_logs';\nmsg.range         = (env.get('SHEETS_TAB_HEALTH') || 'health_logs') + '!A:H';\n\nnode.status({fill:'blue', shape:'dot',\n    text: 'q:' + queue.length + ' t:' + (lastTemp || '?') + ' err:' + totalErrors});\nreturn msg;",
+    "outputs": 1,
+    "x": 340,
+    "y": 520,
+    "wires": [["n-health-sheets"]]
+  },
+
+  {
+    "id": "n-health-sheets",
+    "type": "google-spreadsheet",
+    "z": "tab-brewery",
+    "name": "health_logs",
+    "auth": "cfg-gsa",
+    "action": "append",
+    "x": 560,
+    "y": 520,
+    "wires": [["n-dbg-health"]]
+  },
+
+  {
+    "id": "n-dbg-health",
+    "type": "debug",
+    "z": "tab-brewery",
+    "name": "Health OK",
+    "active": true,
+    "tosidebar": true,
+    "complete": "payload",
+    "x": 740,
+    "y": 520,
+    "wires": []
   }
 ]
