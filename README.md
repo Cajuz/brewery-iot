@@ -19,14 +19,15 @@ ESP32 (DS18B20) → Mosquitto MQTT → Node-RED → Google Sheets
 5. [Passo 3 — Configurar Google Sheets (Service Account)](#passo-3--configurar-google-sheets-service-account)
 6. [Passo 4 — Criar usuários MQTT](#passo-4--criar-usuários-mqtt)
 7. [Passo 5 — Subir os serviços com Docker](#passo-5--subir-os-serviços-com-docker)
-8. [Passo 6 — Importar o Flow no Node-RED](#passo-6--importar-o-flow-no-node-red)
-9. [Passo 7 — Configurar credenciais do Google no Node-RED](#passo-7--configurar-credenciais-do-google-no-node-red)
-10. [Passo 8 — Testar a pipeline](#passo-8--testar-a-pipeline)
-11. [Passo 9 — Conectar o ESP32 (firmware)](#passo-9--conectar-o-esp32-firmware)
-12. [Verificando no Google Sheets](#verificando-no-google-sheets)
-13. [Comandos úteis de operação](#comandos-úteis-de-operação)
-14. [Solução de problemas comuns](#solução-de-problemas-comuns)
-15. [Glossário](#glossário)
+8. [Passo 6 — Restaurar o Node-RED (flow + credenciais)](#passo-6--restaurar-o-node-red-flow--credenciais)
+9. [Passo 7 — Importar o Flow no Node-RED (alternativa manual)](#passo-7--importar-o-flow-no-node-red-alternativa-manual)
+10. [Passo 8 — Configurar credenciais do Google no Node-RED](#passo-8--configurar-credenciais-do-google-no-node-red)
+11. [Passo 9 — Testar a pipeline](#passo-9--testar-a-pipeline)
+12. [Passo 10 — Conectar o ESP32 (firmware)](#passo-10--conectar-o-esp32-firmware)
+13. [Verificando no Google Sheets](#verificando-no-google-sheets)
+14. [Comandos úteis de operação](#comandos-úteis-de-operação)
+15. [Solução de problemas comuns](#solução-de-problemas-comuns)
+16. [Glossário](#glossário)
 
 ---
 
@@ -95,9 +96,13 @@ brewery-iot/
 │       └── mosquitto.conf    ← configuração do broker MQTT
 ├── node-red/
 │   ├── flows/
-│   │   └── brewery_flow.json ← flow principal do Node-RED
+│   │   ├── brewery_flow.json     ← flow principal do Node-RED
+│   │   ├── credentials_flow.json ← credenciais criptografadas
+│   │   └── settings.js           ← configuração do Node-RED
 │   └── data/
-│       └── settings.js       ← configuração do Node-RED
+│       └── credentials/
+│           └── brewery-iot/
+│               └── service-account.json ← chave Google (não versionada em prod)
 ├── scripts/
 │   ├── setup_mosquitto_users.sh  ← cria usuários MQTT
 │   └── test_mqtt_connection.py   ← simula o ESP32
@@ -109,7 +114,7 @@ brewery-iot/
 
 ## Passo 2 — Configurar variáveis de ambiente (.env)
 
-O arquivo `.env` guarda todas as senhas e configurações. Nunca commite ele no Git.
+O arquivo `.env` guarda todas as senhas e configurações. Nunca commite ele no Git em produção.
 
 ### 2.1 — Copiar o template
 
@@ -163,7 +168,7 @@ NODERED_CREDENTIAL_SECRET=brewery_chave_super_secreta_2026
 # ─── GOOGLE SHEETS ──────────────────────────────────────
 # ⚠️ ID da planilha — veja como obter no Passo 3
 SHEETS_SPREADSHEET_ID=1AbCdEfGhIjKlMnOpQrStUvWxYz1234567890
-SHEETS_CREDENTIALS_PATH=/data/credentials/service-account.json
+SHEETS_CREDENTIALS_PATH=/data/credentials/brewery-iot/service-account.json
 SHEETS_TAB_READINGS=sensor_readings
 SHEETS_TAB_EVENTS=event_logs
 SHEETS_TAB_HEALTH=health_logs
@@ -220,27 +225,38 @@ Este passo autoriza o Node-RED a escrever dados na sua planilha.
 Crie a pasta e mova o arquivo:
 
 ```bash
-mkdir -p node-red/data/credentials
-cp ~/Downloads/brewery-iot-abc123.json node-red/data/credentials/service-account.json
+mkdir -p node-red/data/credentials/brewery-iot
+cp ~/Downloads/brewery-iot-abc123.json node-red/data/credentials/brewery-iot/service-account.json
 ```
 
 > ⚠️ **Importante:** O nome do arquivo deve ser exatamente `service-account.json`.
 
-### 3.6 — Criar a planilha e compartilhar
+### 3.6 — Criar a planilha, abas e compartilhar
 
 1. Acesse https://sheets.google.com → crie uma nova planilha
-2. **⚠️ Renomeie a aba padrão "Página1" (ou "Sheet1") para `sensor_readings`:**
-   - Clique duas vezes no nome da aba na parte inferior da tela
-   - Apague o nome atual e digite exatamente `sensor_readings`
-   - Pressione **Enter** para confirmar
+2. **Crie as três abas** com exatamente esses nomes:
+   - `sensor_readings`
+   - `event_logs`
+   - `health_logs`
+3. **Adicione os cabeçalhos** em cada aba (linha 1):
 
-   > ⚠️ **Atenção:** O nome da aba deve ser exatamente `sensor_readings` (sem maiúsculas, sem espaços, sem acentos). O Node-RED usa esse nome para saber onde gravar os dados. Se estiver errado, a gravação falhará silenciosamente.
+   **sensor_readings** — colunas A:C
+   | timestamp | temperature | device_id |
+   |---|---|---|
 
-3. Copie o ID da planilha da URL e cole no `.env` no campo `SHEETS_SPREADSHEET_ID`
-4. Clique em **Share** (Compartilhar)
-5. No campo de e-mail, cole o `client_email` do JSON da Service Account
+   **event_logs** — colunas A:D
+   | timestamp | event_type | detail | source |
+   |---|---|---|---|
+
+   **health_logs** — colunas A:H
+   | timestamp | queue_size | last_temp | last_reading_age_s | broker_status | total_readings | total_errors | csv_buffer_lines |
+   |---|---|---|---|---|---|---|---|
+
+4. Copie o ID da planilha da URL e cole no `.env` no campo `SHEETS_SPREADSHEET_ID`
+5. Clique em **Share** (Compartilhar)
+6. No campo de e-mail, cole o `client_email` do JSON da Service Account
    - Parece com: `brewery-nodered@brewery-iot-xxxxx.iam.gserviceaccount.com`
-6. Defina permissão como **Editor** → clique **Send**
+7. Defina permissão como **Editor** → clique **Send**
 
 > **Por que isso?** O Node-RED vai usar a Service Account para escrever na planilha.
 > Sem o compartilhamento, ele receberá erro 403 (Permission Denied).
@@ -318,24 +334,94 @@ Para parar de ver os logs: `Ctrl+C`
 
 ---
 
-## Passo 6 — Importar o Flow no Node-RED
+## Passo 6 — Restaurar o Node-RED (flow + credenciais)
 
-### 6.1 — Acessar o painel
+> Este é o método **rápido** para recriar o Node-RED exatamente como estava configurado,
+> usando os arquivos versionados no repositório.
+> Se preferir configurar tudo manualmente do zero, pule para o Passo 7.
+
+### 6.1 — Copiar os arquivos do repositório para o volume
+
+No PowerShell, na raiz do projeto:
+
+```powershell
+# Flow principal
+Copy-Item .\node-red\flows\brewery_flow.json .\node-red\data\flows.json
+
+# Credenciais criptografadas dos nós
+Copy-Item .\node-red\flows\credentials_flow.json .\node-red\data\flows_cred.json
+
+# Settings do Node-RED (porta, chave de criptografia, etc.)
+Copy-Item .\node-red\flows\settings.js .\node-red\data\settings.js
+```
+
+### 6.2 — Restaurar os pacotes npm (nodes extras)
+
+Se o repositório contiver `node-red/data/package.json`, os nodes extras (como `node-red-contrib-google-spreadsheet`) serão reinstalados automaticamente na próxima subida do container.
+
+Confirma se o arquivo existe:
+
+```powershell
+dir .\node-red\data\package.json
+```
+
+Se existir, o Node-RED instala os pacotes sozinho ao subir. Se não existir, instale manualmente conforme o Passo 7.
+
+### 6.3 — Reiniciar o Node-RED
+
+```powershell
+docker compose restart nodered
+```
+
+Aguarde 30 segundos e verifique os logs:
+
+```powershell
+docker compose logs --tail 30 nodered
+```
+
+Resultado esperado (sem erros):
+
+```
+Starting flows
+Started flows
+[mqtt-broker:Mosquitto Docker] Connected to broker: nodered-brewery@mqtt://mosquitto:1883
+```
+
+### 6.4 — Verificar o flow no painel
+
+Abra **http://localhost:1880** e confirme:
+
+- A aba **Brewery IoT** aparece com os 3 pipelines (sensor_readings, event_logs, health_logs)
+- O nó **DS18B20** mostra badge **"conectado"**
+- Os nós Google Sheets não mostram badge de erro
+
+> ⚠️ **Atenção:** O arquivo `flows_cred.json` é criptografado com a chave definida em `settings.js`
+> (`credentialSecret`). Se você trocar o `settings.js` ou o `credentialSecret`, as credenciais
+> dos nós serão invalidadas e você precisará reconfigurar manualmente os campos de
+> usuário/senha no Node-RED.
+
+---
+
+## Passo 7 — Importar o Flow no Node-RED (alternativa manual)
+
+> Siga este passo apenas se **não** fez o Passo 6 (restore automático).
+
+### 7.1 — Acessar o painel
 
 Abra o browser em: **http://localhost:1880**
 
 Faça login com `NODERED_ADMIN_USER` e `NODERED_ADMIN_PASSWORD` definidos no `.env`.
 
-### 6.2 — Instalar o pacote Google Sheets
+### 7.2 — Instalar o pacote Google Sheets
 
 Antes de importar o flow, instale o pacote necessário:
 
 1. Clique no ≡ (menu hambúrguer) → **Gerenciar paleta**
 2. Vá na aba **Instalar**
-3. Pesquise `node-red-contrib-google-sheets-advance`
+3. Pesquise `node-red-contrib-google-spreadsheet`
 4. Clique **Instalar** e aguarde 1-2 minutos
 
-### 6.3 — Importar o flow
+### 7.3 — Importar o flow
 
 1. No canto superior direito, clique no ≡ (menu hambúrguer)
 2. Clique em **Import**
@@ -347,21 +433,22 @@ Você verá o flow `Brewery IoT` aparecer na tela com os nós conectados.
 
 ---
 
-## Passo 7 — Configurar credenciais do Google no Node-RED
+## Passo 8 — Configurar credenciais do Google no Node-RED
 
-### 7.1 — Abrir as configurações do nó Sheets
+> Se você fez o restore do Passo 6 com sucesso e não aparece erro nos nós Sheets, pode pular este passo.
+
+### 8.1 — Abrir as configurações do nó Sheets
 
 1. No flow importado, clique duas vezes no nó **`sensor_readings`** (verde, no meio do flow)
 2. Na janela que abrir, clique no ícone de lápis ✏️ ao lado do campo **Credentials**
 
-### 7.2 — Preencher os campos da Service Account
+### 8.2 — Preencher os campos da Service Account
 
-Abra o arquivo `node-red/data/credentials/service-account.json` e copie os valores para os campos correspondentes:
+Abra o arquivo `node-red/data/credentials/brewery-iot/service-account.json` e copie os valores:
 
 ```powershell
 # No PowerShell, para ver o conteúdo formatado:
-$json = Get-Content "node-red\data\credentials\service-account.json" | ConvertFrom-Json
-$json.project_id
+$json = Get-Content ".\node-red\data\credentials\brewery-iot\service-account.json" | ConvertFrom-Json
 $json.client_email
 $json.private_key
 ```
@@ -372,21 +459,21 @@ $json.private_key
 | `private_key` | `"private_key"` (incluindo `-----BEGIN PRIVATE KEY-----`) |
 | `client_email` | `"client_email"` |
 
-> ⚠️ **Atenção:** A chave deve começar com `-----BEGIN PRIVATE KEY-----` (sem `RSA`). Se começar com `-----BEGIN RSA PRIVATE KEY-----`, gere uma nova chave no Google Cloud Console.
+> ⚠️ **Atenção:** A chave deve começar com `-----BEGIN PRIVATE KEY-----` (sem `RSA`).
 
 4. Clique **Update** → **Done**
 
-### 7.3 — Configurar o broker MQTT no nó DS18B20
+### 8.3 — Configurar o broker MQTT no nó DS18B20
 
 1. Clique duas vezes no nó **DS18B20** (roxo, à esquerda)
 2. Clique no lápis ✏️ ao lado do campo **Servidor**
-3. Na aba **Conexão**, preencha **Servidor** com `mosquitto`
+3. Na aba **Conexão**, preencha **Servidor** com `mosquitto` e **Porta** com `1883`
 4. Na aba **Segurança**, preencha:
    - **Usuário:** `nodered`
    - **Senha:** a senha definida no Passo 4
 5. Clique **Atualizar** → **Done**
 
-### 7.4 — Fazer Deploy
+### 8.4 — Fazer Deploy
 
 Clique no botão vermelho **Implementar** no canto superior direito.
 
@@ -394,7 +481,7 @@ Você deve ver a mensagem `Implementado com sucesso` e o nó DS18B20 mostrando *
 
 ---
 
-## Passo 8 — Testar a pipeline
+## Passo 9 — Testar a pipeline
 
 ### Opção A — Script Python (recomendado)
 
@@ -423,11 +510,7 @@ A saída deve ser:
 📥 Mensagem recebida:
    Tópico : brewery/sensors/temperature
    QoS    : 1
-   Payload: {
-         "temperature": 23.5,
-         "unit": "C",
-         "device_id": "esp32_test"
-      }
+   Payload: 23.5
 ✅ Teste concluído! 1 mensagem(ns) recebida(s).
 ```
 
@@ -456,7 +539,7 @@ Após publicar, no painel http://localhost:1880:
 
 ---
 
-## Passo 9 — Conectar o ESP32 (firmware)
+## Passo 10 — Conectar o ESP32 (firmware)
 
 O firmware do ESP32 é desenvolvido separadamente no Arduino IDE ou PlatformIO. Configure com os valores do seu `.env`:
 
@@ -492,13 +575,27 @@ ipconfig
 ## Verificando no Google Sheets
 
 Após o teste, abra a planilha no Google Sheets.
-Na aba `sensor_readings`, uma nova linha deve aparecer:
 
-| timestamp | temperature | sensor |
+**Aba `sensor_readings`** — nova linha a cada leitura do ESP32:
+
+| timestamp | temperature | device_id |
 |---|---|---|
-| 2026-04-20T21:30:00Z | 23.5 | DS18B20 |
+| 2026-04-25T23:21:00Z | 23.5 | DS18B20 |
 
-Se a linha não aparecer em até 30 segundos, veja a seção [Solução de problemas](#solução-de-problemas-comuns).
+**Aba `event_logs`** — registra eventos do sistema:
+
+| timestamp | event_type | detail | source |
+|---|---|---|---|
+| 2026-04-25T23:21:15Z | MQTT_CONNECTED | nodered-brewery@mosquitto:1883 | mqtt-broker |
+| 2026-04-25T23:22:00Z | SENSOR_INVALID | Valor fora do range: 999 | n-validate |
+
+**Aba `health_logs`** — heartbeat a cada 5 minutos:
+
+| timestamp | queue_size | last_temp | last_reading_age_s | broker_status | total_readings | total_errors | csv_buffer_lines |
+|---|---|---|---|---|---|---|---|
+| 2026-04-25T23:25:00Z | 0 | 23.5 | 10 | connected | 42 | 0 | 0 |
+
+Se os dados não aparecerem em até 30 segundos, veja a seção [Solução de problemas](#solução-de-problemas-comuns).
 
 ---
 
@@ -528,6 +625,14 @@ docker compose down -v
 
 # Ver logs das últimas 50 linhas
 docker compose logs --tail=50
+
+# Salvar estado atual do Node-RED no repositório
+Copy-Item .\node-red\data\flows.json        .\node-red\flows\brewery_flow.json
+Copy-Item .\node-red\data\flows_cred.json   .\node-red\flows\credentials_flow.json
+Copy-Item .\node-red\data\settings.js       .\node-red\flows\settings.js
+git add node-red/flows/
+git commit -m "chore: salva estado atual do Node-RED"
+git push
 ```
 
 ---
@@ -551,7 +656,7 @@ Verifique se o arquivo `mosquitto/config/passwd` existe (Passo 4 não foi execut
 
 **Causa:** pacote npm não instalado.
 
-Instale via **Gerenciar paleta** → aba **Instalar** → pesquise `node-red-contrib-google-sheets-advance` → clique **Instalar**.
+Instale via **Gerenciar paleta** → aba **Instalar** → pesquise `node-red-contrib-google-spreadsheet` → clique **Instalar**.
 
 ---
 
@@ -559,21 +664,29 @@ Instale via **Gerenciar paleta** → aba **Instalar** → pesquise `node-red-con
 
 **Causa:** planilha não compartilhada com a Service Account.
 
-1. Abra o arquivo `node-red/data/credentials/service-account.json`
+1. Abra o arquivo `node-red/data/credentials/brewery-iot/service-account.json`
 2. Copie o valor do campo `client_email`
 3. Abra a planilha no Google Sheets → Share → cole o e-mail → Editor → Send
 
 ---
 
-### ❌ Erro 401 / JWT authorization failed
+### ❌ Erro 401 / JWT authorization failed / Headers is not defined
 
-**Causa:** chave privada em formato incorreto ou corrompida.
+**Causa:** versão do Node.js incompatível (abaixo do 18) com a biblioteca JWT.
 
-1. Acesse o Google Cloud Console → Service Accounts → sua conta
-2. Aba **Keys** → **Add Key** → **Create new key** → **JSON**
-3. Substitua o arquivo `node-red/data/credentials/service-account.json`
-4. Reconfigure os campos no nó `sensor_readings` do Node-RED
-5. Adicione `NODE_OPTIONS=--openssl-legacy-provider` nas variáveis de ambiente do `docker-compose.yml`
+Atualize a imagem do Node-RED no `docker-compose.yml`:
+
+```yaml
+image: nodered/node-red:3.1-18
+```
+
+Depois:
+
+```powershell
+docker compose down
+docker compose pull
+docker compose up -d
+```
 
 ---
 
@@ -581,7 +694,7 @@ Instale via **Gerenciar paleta** → aba **Instalar** → pesquise `node-red-con
 
 **Causa:** nome da aba da planilha incorreto.
 
-Verifique se a aba se chama exatamente `sensor_readings` (sem maiúsculas, sem espaços).
+Verifique se as abas se chamam exatamente `sensor_readings`, `event_logs` e `health_logs` (sem maiúsculas, sem espaços).
 
 ---
 
@@ -610,6 +723,14 @@ Use o Git Bash (instalado junto com o Git) ou siga a Opção B do Passo 4 com Po
 
 ---
 
+### ❌ Após restore, Node-RED não carrega as credenciais
+
+**Causa:** o `credentialSecret` no `settings.js` restaurado é diferente do que foi usado para criptografar o `flows_cred.json`.
+
+Solução: reconfigure as credenciais manualmente seguindo o Passo 8.
+
+---
+
 ## Glossário
 
 | Termo | Definição |
@@ -625,3 +746,5 @@ Use o Git Bash (instalado junto com o Git) ou siga a Opção B do Passo 4 com Po
 | **Container** | Ambiente isolado onde um serviço roda (Mosquitto, Node-RED). |
 | **DS18B20** | Sensor de temperatura digital da Dallas/Maxim. Range: −55°C a +125°C. |
 | **ESP32** | Microcontrolador com WiFi da Espressif. Lê o sensor e publica via MQTT. |
+| **flows_cred.json** | Arquivo com credenciais dos nós Node-RED, criptografado com o `credentialSecret`. |
+| **credentialSecret** | Chave de criptografia definida no `settings.js` do Node-RED. |
