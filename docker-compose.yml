@@ -4,7 +4,7 @@
 
 services:
 
-  # ── Broker MQTT ──────────────────────────────────────────────
+  # ── Broker MQTT ───────────────────────────────────────────────
   mosquitto:
     image: eclipse-mosquitto:2.0
     container_name: brewery_mosquitto
@@ -17,19 +17,19 @@ services:
       - MQTT_NODERED_PASSWORD=${MQTT_NODERED_PASSWORD}
     volumes:
       - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./mosquitto/config/passwd:/mosquitto/config/passwd:ro
+      - ./mosquitto/config/passwd:/mosquitto/config/passwd       # sem :ro — entrypoint faz chown
       - ./mosquitto/data:/mosquitto/data
       - ./mosquitto/log:/mosquitto/log
-    healthcheck:                                          # FIX 2: CMD-SHELL em array
+    healthcheck:
       test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/#' -C 1 -u \"$$MQTT_NODERED_USER\" -P \"$$MQTT_NODERED_PASSWORD\" --quiet"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-    networks:                                             # FIX 1: estava faltando
+    networks:
       - brewery_net
 
-  # ── Node-RED ─────────────────────────────────────────────────
+  # ── Node-RED ──────────────────────────────────────────────────
   nodered:
     image: nodered/node-red:3.1
     container_name: brewery_nodered
@@ -47,23 +47,28 @@ services:
       - MQTT_NODERED_USER=${MQTT_NODERED_USER}
       - MQTT_NODERED_PASSWORD=${MQTT_NODERED_PASSWORD}
       - MQTT_TOPIC_TEMPERATURE=${MQTT_TOPIC_TEMPERATURE}
-      - GOOGLE_SHEET_ID=${GOOGLE_SHEET_ID}
-      - GOOGLE_CREDENTIALS_PATH=${GOOGLE_CREDENTIALS_PATH}
-      - SHEET_SENSOR_READINGS=${SHEET_SENSOR_READINGS}
-      - SHEET_EVENT_LOGS=${SHEET_EVENT_LOGS}
-      - SHEET_HEALTH_LOGS=${SHEET_HEALTH_LOGS}
+      - SHEETS_SPREADSHEET_ID=${SHEETS_SPREADSHEET_ID}
+      - SHEETS_CREDENTIALS_PATH=${SHEETS_CREDENTIALS_PATH}
+      - SHEETS_TAB_READINGS=${SHEETS_TAB_READINGS}
+      - SHEETS_TAB_EVENTS=${SHEETS_TAB_EVENTS}
+      - SHEETS_TAB_HEALTH=${SHEETS_TAB_HEALTH}
       - QUEUE_MAX_SIZE=${QUEUE_MAX_SIZE:-500}
-      - RETRY_DELAY_SECONDS=${RETRY_DELAY_SECONDS:-60}
+      - RETRY_DELAY_MS=${RETRY_DELAY_MS:-60000}
       - RETRY_MAX_ATTEMPTS=${RETRY_MAX_ATTEMPTS:-5}
-      - CSV_BUFFER_PATH=${CSV_BUFFER_PATH:-/data/buffer.csv}
+      - BUFFER_CSV_PATH=${BUFFER_CSV_PATH:-/data/buffer.csv}
+      - SENSOR_TEMP_MIN=${SENSOR_TEMP_MIN:--55}
+      - SENSOR_TEMP_MAX=${SENSOR_TEMP_MAX:-125}
+      - NODERED_ADMIN_USER=${NODERED_ADMIN_USER}
+      - NODERED_ADMIN_PASSWORD=${NODERED_ADMIN_PASSWORD}
     volumes:
-      - ./node-red/data:/data
+      - ./node-red/data:/data                          # settings.js, package.json
+      - ./node-red/flows:/data/flows                   # brewery_flow.json
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:1880"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 20s
+      retries: 5
+      start_period: 60s                               # Node-RED demora instalar plugins
     networks:
       - brewery_net
 
