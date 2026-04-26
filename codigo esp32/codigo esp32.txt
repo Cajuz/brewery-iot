@@ -1,6 +1,7 @@
 #include <OneWire.h>
 #include <Wire.h>
 #include <DallasTemperature.h>
+#include <ArduinoJson.h>
 #include <LiquidCrystal_I2C.h>
 #include <PID_v1.h>
 #include <WiFi.h>
@@ -51,6 +52,11 @@ float lastTempDisplay = -999;
 short lastAlvoDisplay = -999;
 short lastSsrDisplay  = -1;
 
+// ─── Constantes de energia ───────────────────────────────────────
+const float TENSAO_ESP   = 3.3;
+const float CORRENTE_ESP = 0.240;  // Amperes
+const float POTENCIA_ESP = TENSAO_ESP * CORRENTE_ESP; // 0.792W
+
 // ─── Fila FreeRTOS ───────────────────────────────────────────────
 struct DadosJson {
   float temperatura;
@@ -83,11 +89,7 @@ void conectarWiFi() {
 void conectarMQTT() {
   mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
   while (!mqttClient.connected()) {
-    Serial.print("Conectando ao MQTT broker ");
-    Serial.print(MQTT_BROKER);
-    Serial.print(":");
-    Serial.print(MQTT_PORT);
-    Serial.print(" ...");
+    Serial.print("Conectando ao MQTT...");
     if (mqttClient.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASSWORD)) {
       Serial.println(" OK");
     } else {
@@ -99,24 +101,16 @@ void conectarMQTT() {
   }
 }
 
-// ─── Publicação MQTT ─────────────────────────────────────────────
-// O Node-RED espera receber APENAS o valor numérico da temperatura.
-// Ex: "23.50"  — não um objeto JSON.
-void publicarMQTT(float temperatura) {
+void publicarMQTT(const String &payload) {
   if (!mqttClient.connected()) {
     conectarMQTT();
   }
-
-  // Formata o float com 2 casas decimais: "23.50"
-  char payload[16];
-  dtostrf(temperatura, 1, 2, payload);
-
-  bool ok = mqttClient.publish(MQTT_TOPIC, payload, /*retained=*/false);
-  Serial.print("MQTT publish [");
-  Serial.print(MQTT_TOPIC);
-  Serial.print("] payload=");
-  Serial.print(payload);
-  Serial.println(ok ? " → OK" : " → FALHOU");
+  // Buffer maior para acomodar o JSON completo
+  mqttClient.setBufferSize(512);
+  bool ok = mqttClient.publish(MQTT_TOPIC, payload.c_str(), /*retained=*/false);
+  Serial.print("MQTT publish [" + String(MQTT_TOPIC) + "]: ");
+  Serial.println(ok ? "OK" : "FALHOU");
+  if (!ok) Serial.println("(verifique se o buffer é suficiente)");
 }
 
 // ─── Display LCD ─────────────────────────────────────────────────
@@ -145,26 +139,33 @@ void atualizarDisplay(float temp, int temp_alvo) {
   lcd.print(ssr_state == 1 ? "C ssr:on " : "C ssr:off");
 }
 
-// ─── Task FreeRTOS: publica temperatura via MQTT ─────────────────
+// ─── Task FreeRTOS: serializa JSON e publica via MQTT ────────────
+// Publica JSON com todos os campos necessários para a pipeline Node-RED
+// Campos gravados no Google Sheets (sensor_readings):
+//   timestamp | temperatura | sensor | temperatura_alvo | ssr_state | potencia_esp_w | energia_esp_wh
 void taskProcessaDados(void *pvParameters) {
   DadosJson dados;
   for (;;) {
     if (xQueueReceive(filaJSON, &dados, portMAX_DELAY)) {
-      // Loga no Serial Monitor para debug
-      Serial.print("[TASK] temp=");
-      Serial.print(dados.temperatura);
-      Serial.print(" alvo=");
-      Serial.print(dados.temperatura_alvo);
-      Serial.print(" erros=");
-      Serial.print(dados.erros);
-      Serial.print(" ssr=");
-      Serial.print(dados.ssr_state);
-      Serial.print(" uptime=");
-      Serial.print(dados.tempoAtivo);
-      Serial.println("s");
+      float tempoHoras = dados.tempoAtivo / 3600.0;
+      float energiaWh  = POTENCIA_ESP * tempoHoras;
 
-      // Publica somente o valor numérico — compatível com o flow Node-RED
-      publicarMQTT(dados.temperatura);
+      StaticJsonDocument<256> doc;
+      doc["sensor"]           = "temperatura";
+      doc["tempoAtivo"]       = dados.tempoAtivo;
+      doc["temperatura"]      = dados.temperatura;
+      doc["temperatura_alvo"] = dados.temperatura_alvo;
+      doc["erros_de_conexao"] = dados.erros;
+      doc["saida_pid"]        = dados.saida_pid;
+      doc["ssr_state"]        = dados.ssr_state;
+      doc["potencia_esp_w"]   = POTENCIA_ESP;
+      doc["energia_esp_wh"]   = energiaWh;
+
+      String output;
+      output.reserve(256);
+      serializeJson(doc, output);
+      Serial.println(output);
+      publicarMQTT(output);
     }
   }
 }
@@ -217,7 +218,7 @@ void setup() {
   delay(750);
 
   float temp_inicial = sensors.getTempCByIndex(0);
-  Input   = temp_inicial;
+  Input    = temp_inicial;
   Setpoint = temperatura_alvo;
 
   myPID.SetMode(AUTOMATIC);
@@ -241,13 +242,12 @@ void valor_de_temperatura() {
       enviarParaFila(temp);
       atualizarDisplay(temp, temperatura_alvo);
     } else {
-      // Sensor desconectado — incrementa erro e não publica
       contagem_de_erro++;
       Serial.print("[ERRO] Sensor desconectado! Total erros: ");
       Serial.println(contagem_de_erro);
       atualizarDisplay(-500, temperatura_alvo);
       digitalWrite(PINO_SSR, LOW);
-      // Não publica -500 no MQTT — o Node-RED rejeitaria como SENSOR_INVALID
+      // Não publica no MQTT — Node-RED rejeitaria como SENSOR_INVALID
     }
   }
 }
