@@ -8,17 +8,16 @@
 #include <PubSubClient.h>
 
 // ─── WiFi ────────────────────────────────────────────────────────
-const char* WIFI_SSID     = "NOME_REDE_WIFI";   // ⚠️ altere para o SSID da sua rede
-const char* WIFI_PASSWORD = "SENHA_WIFI";        // ⚠️ altere para a senha da sua rede
+const char* WIFI_SSID     = "ZENAIDE";
+const char* WIFI_PASSWORD = "zenaide15031967";
 
 // ─── MQTT ────────────────────────────────────────────────────────
-// IP do host onde o Docker está rodando (verifique com `ipconfig` no Windows)
-const char* MQTT_BROKER    = "IP_DO_HOST";       // ⚠️ ex: "192.168.1.100"
+const char* MQTT_BROKER    = "192.168.18.7";
 const int   MQTT_PORT      = 1883;
-const char* MQTT_USER      = "esp32";            // MQTT_ESP32_USER do .env
-const char* MQTT_PASSWORD  = "belezafatal";      // MQTT_ESP32_PASSWORD do .env (ambiente de teste)
+const char* MQTT_USER      = "esp32";
+const char* MQTT_PASSWORD  = "belezafatal";
 const char* MQTT_CLIENT_ID = "esp32-brewery";
-const char* MQTT_TOPIC     = "brewery/sensors/temperature"; // MQTT_TOPIC_TEMPERATURE do .env
+const char* MQTT_TOPIC     = "brewery/sensors/temperature";
 
 // ─── Sensor DS18B20 ──────────────────────────────────────────────
 const short PINODEDADOS = 4;
@@ -28,7 +27,7 @@ unsigned int  contagem_de_erro = 0;
 // ─── PID / SSR ───────────────────────────────────────────────────
 short temperatura_alvo = 25;
 const short PINO_SSR   = 5;
-short ssr_state        = 0;
+volatile short ssr_state = 0;
 double Setpoint, Input, Output;
 
 double Kp = 1500.0, Ki = 10.0, Kd = 50.0;
@@ -54,15 +53,13 @@ short lastSsrDisplay  = -1;
 
 // ─── Constantes de energia ───────────────────────────────────────
 const float TENSAO_ESP   = 3.3;
-const float CORRENTE_ESP = 0.240;  // Amperes
+const float CORRENTE_ESP = 0.240;
 const float POTENCIA_ESP = TENSAO_ESP * CORRENTE_ESP; // 0.792W
 
 // ─── Fila FreeRTOS ───────────────────────────────────────────────
 struct DadosJson {
   float temperatura;
   short temperatura_alvo;
-  unsigned int erros;
-  double saida_pid;
   short ssr_state;
   unsigned long tempoAtivo;
 };
@@ -70,47 +67,59 @@ struct DadosJson {
 QueueHandle_t filaJSON;
 
 // ─── Clientes WiFi/MQTT ──────────────────────────────────────────
+// ✅ Mesmo padrão do código de teste que funcionou
 WiFiClient   wifiClient;
 PubSubClient mqttClient(wifiClient);
 
 // ─────────────────────────────────────────────────────────────────
-void conectarWiFi() {
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print("Conectando ao WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println();
-  Serial.print("WiFi conectado — IP: ");
-  Serial.println(WiFi.localIP());
-}
+// Reconecta MQTT — chamado no loop(), igual ao código de teste
+// SEM FreeRTOS task, SEM mutex — exatamente como funcionou no teste
+// ─────────────────────────────────────────────────────────────────
+void reconectarMQTT() {
+  if (mqttClient.connected()) return;
+  if (WiFi.status() != WL_CONNECTED) return;
 
-void conectarMQTT() {
-  mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
-  while (!mqttClient.connected()) {
-    Serial.print("Conectando ao MQTT...");
-    if (mqttClient.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASSWORD)) {
-      Serial.println(" OK");
-    } else {
-      Serial.print(" falhou, rc=");
-      Serial.print(mqttClient.state());
-      Serial.println(" — tentando em 3s");
-      delay(3000);
-    }
+  Serial.println("[MQTT] Conectando ao broker " + String(MQTT_BROKER) + "...");
+  bool ok = mqttClient.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASSWORD);
+  int  rc  = mqttClient.state();
+
+  if (ok) {
+    Serial.println("[MQTT] Conectado!");
+  } else {
+    Serial.println("[MQTT] Falhou rc=" + String(rc));
   }
 }
 
-void publicarMQTT(const String &payload) {
+// ─────────────────────────────────────────────────────────────────
+// Publica JSON com os campos solicitados:
+// timestamp | temperatura | temperatura_alvo | ssr_state
+// potencia_esp_w | energia_esp_wh
+// ─────────────────────────────────────────────────────────────────
+void publicarMQTT(const DadosJson &dados) {
   if (!mqttClient.connected()) {
-    conectarMQTT();
+    Serial.println("[MQTT] Nao conectado — publicacao ignorada");
+    return;
   }
-  // Buffer maior para acomodar o JSON completo
-  mqttClient.setBufferSize(512);
-  bool ok = mqttClient.publish(MQTT_TOPIC, payload.c_str(), /*retained=*/false);
-  Serial.print("MQTT publish [" + String(MQTT_TOPIC) + "]: ");
-  Serial.println(ok ? "OK" : "FALHOU");
-  if (!ok) Serial.println("(verifique se o buffer é suficiente)");
+
+  float tempoHoras = dados.tempoAtivo / 3600.0;
+  float energiaWh  = POTENCIA_ESP * tempoHoras;
+
+  StaticJsonDocument<256> doc;
+  doc["timestamp"]        = dados.tempoAtivo;
+  doc["temperatura"]      = dados.temperatura;
+  doc["temperatura_alvo"] = dados.temperatura_alvo;
+  doc["ssr_state"]        = dados.ssr_state;
+  doc["potencia_esp_w"]   = POTENCIA_ESP;
+  doc["energia_esp_wh"]   = energiaWh;
+
+  String output;
+  output.reserve(256);
+  serializeJson(doc, output);
+
+  Serial.println(output);
+
+  bool ok = mqttClient.publish(MQTT_TOPIC, output.c_str(), false);
+  Serial.println(ok ? "[MQTT] Publicado!" : "[MQTT] Publicacao falhou");
 }
 
 // ─── Display LCD ─────────────────────────────────────────────────
@@ -139,48 +148,6 @@ void atualizarDisplay(float temp, int temp_alvo) {
   lcd.print(ssr_state == 1 ? "C ssr:on " : "C ssr:off");
 }
 
-// ─── Task FreeRTOS: serializa JSON e publica via MQTT ────────────
-// Publica JSON com todos os campos necessários para a pipeline Node-RED
-// Campos gravados no Google Sheets (sensor_readings):
-//   timestamp | temperatura | sensor | temperatura_alvo | ssr_state | potencia_esp_w | energia_esp_wh
-void taskProcessaDados(void *pvParameters) {
-  DadosJson dados;
-  for (;;) {
-    if (xQueueReceive(filaJSON, &dados, portMAX_DELAY)) {
-      float tempoHoras = dados.tempoAtivo / 3600.0;
-      float energiaWh  = POTENCIA_ESP * tempoHoras;
-
-      StaticJsonDocument<256> doc;
-      doc["sensor"]           = "temperatura";
-      doc["tempoAtivo"]       = dados.tempoAtivo;
-      doc["temperatura"]      = dados.temperatura;
-      doc["temperatura_alvo"] = dados.temperatura_alvo;
-      doc["erros_de_conexao"] = dados.erros;
-      doc["saida_pid"]        = dados.saida_pid;
-      doc["ssr_state"]        = dados.ssr_state;
-      doc["potencia_esp_w"]   = POTENCIA_ESP;
-      doc["energia_esp_wh"]   = energiaWh;
-
-      String output;
-      output.reserve(256);
-      serializeJson(doc, output);
-      Serial.println(output);
-      publicarMQTT(output);
-    }
-  }
-}
-
-void enviarParaFila(float temp) {
-  DadosJson dados;
-  dados.temperatura      = temp;
-  dados.temperatura_alvo = temperatura_alvo;
-  dados.erros            = contagem_de_erro;
-  dados.saida_pid        = Output;
-  dados.ssr_state        = ssr_state;
-  dados.tempoAtivo       = millis() / 1000;
-  xQueueSend(filaJSON, &dados, 0);
-}
-
 // ─────────────────────────────────────────────────────────────────
 OneWire oneWire(PINODEDADOS);
 DallasTemperature sensors(&oneWire);
@@ -194,16 +161,46 @@ bool executarACada(unsigned long intervalo, unsigned long *ultimoTempo) {
   return false;
 }
 
+// ─────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
+  delay(1000);
   Serial.println("\n=== Brewery IoT — ESP32 iniciando ===");
 
-  conectarWiFi();
-  conectarMQTT();
+  // ✅ WiFi — mesmo padrão do código de teste
+  Serial.println("[WiFi] Conectando a: " + String(WIFI_SSID));
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  filaJSON = xQueueCreate(10, sizeof(DadosJson));
-  xTaskCreatePinnedToCore(taskProcessaDados, "TaskMQTT", 4096, NULL, 1, NULL, 0);
+  int tentativas = 0;
+  while (WiFi.status() != WL_CONNECTED && tentativas < 20) {
+    delay(500);
+    Serial.print(".");
+    tentativas++;
+  }
+  Serial.println();
 
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("[WiFi] Conectado!");
+    Serial.println("[WiFi] IP     : " + WiFi.localIP().toString());
+    Serial.println("[WiFi] Gateway: " + WiFi.gatewayIP().toString());
+    Serial.println("[WiFi] RSSI   : " + String(WiFi.RSSI()) + " dBm");
+  } else {
+    Serial.println("[WiFi] FALHOU — verifique SSID e senha");
+  }
+
+  // ✅ MQTT — mesmo padrão do código de teste
+  mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
+  mqttClient.setSocketTimeout(5);
+  mqttClient.setBufferSize(512);
+
+  Serial.println("[MQTT] Broker  : " + String(MQTT_BROKER) + ":" + String(MQTT_PORT));
+  Serial.println("[MQTT] Usuario : " + String(MQTT_USER));
+  Serial.println("[MQTT] ClientID: " + String(MQTT_CLIENT_ID));
+
+  reconectarMQTT();
+
+  // ─── Hardware ────────────────────────────────────────────────
   pinMode(PINO_BOTAO_AUMENTAR_TEMPERATURA, INPUT_PULLUP);
   pinMode(PINO_BOTAO_DIMINUIR_TEMPERATURA, INPUT_PULLUP);
   pinMode(PINO_SSR, OUTPUT);
@@ -229,9 +226,10 @@ void setup() {
   atualizarDisplay(temp_inicial, temperatura_alvo);
   sensors.requestTemperatures();
 
-  Serial.println("=== Setup concluído ===");
+  Serial.println("=== Setup concluido ===");
 }
 
+// ─────────────────────────────────────────────────────────────────
 void valor_de_temperatura() {
   if (executarACada(800, &delaytemp)) {
     float temp = sensors.getTempCByIndex(0);
@@ -239,7 +237,14 @@ void valor_de_temperatura() {
 
     if (temp != DEVICE_DISCONNECTED_C && temp > -50) {
       Input = temp;
-      enviarParaFila(temp);
+
+      DadosJson dados;
+      dados.temperatura      = temp;
+      dados.temperatura_alvo = temperatura_alvo;
+      dados.ssr_state        = ssr_state;
+      dados.tempoAtivo       = millis() / 1000;
+
+      publicarMQTT(dados);
       atualizarDisplay(temp, temperatura_alvo);
     } else {
       contagem_de_erro++;
@@ -247,7 +252,7 @@ void valor_de_temperatura() {
       Serial.println(contagem_de_erro);
       atualizarDisplay(-500, temperatura_alvo);
       digitalWrite(PINO_SSR, LOW);
-      // Não publica no MQTT — Node-RED rejeitaria como SENSOR_INVALID
+      // Nao publica leitura invalida
     }
   }
 }
@@ -278,10 +283,27 @@ void controleSSR() {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────
+// loop() — sem FreeRTOS, sem mutex, sem tasks de rede
+// ✅ Mesmo padrão do código de teste que funcionou
+// ─────────────────────────────────────────────────────────────────
 void loop() {
-  if (WiFi.status() != WL_CONNECTED) conectarWiFi();
-  if (!mqttClient.connected())        conectarMQTT();
+  // Reconecta WiFi se cair
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[WiFi] Desconectado — reconectando...");
+    WiFi.reconnect();
+    delay(5000);
+    return;
+  }
+
+  // Reconecta MQTT se cair — nao bloqueia o loop
+  if (!mqttClient.connected()) {
+    reconectarMQTT();
+  }
+
+  // Keepalive MQTT
   mqttClient.loop();
+
   lerBotoes();
   valor_de_temperatura();
   controleSSR();
