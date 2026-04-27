@@ -12,22 +12,22 @@ ESP32 (DS18B20) → Mosquitto MQTT → Node-RED → Google Sheets
 
 ## Índice
 
-1. [O que é este projeto?](#1-o-que-é-este-projeto)
+1. [O que é este projeto?](#1-o-que-%C3%A9-este-projeto)
 2. [Pré-requisitos](#2-pré-requisitos)
 3. [Passo 1 — Clonar o repositório](#passo-1--clonar-o-repositório)
-4. [Passo 2 — Configurar variáveis de ambiente (.env)](#passo-2--configurar-variáveis-de-ambiente-env)
-5. [Passo 3 — Configurar Google Sheets (Service Account)](#passo-3--configurar-google-sheets-service-account)
-6. [Passo 4 — Criar usuários MQTT](#passo-4--criar-usuários-mqtt)
-7. [Passo 5 — Subir os serviços com Docker](#passo-5--subir-os-serviços-com-docker)
-8. [Passo 6 — Restaurar o Node-RED (flow + credenciais)](#passo-6--restaurar-o-node-red-flow--credenciais)
-9. [Passo 7 — Importar o Flow no Node-RED (alternativa manual)](#passo-7--importar-o-flow-no-node-red-alternativa-manual)
-10. [Passo 8 — Configurar credenciais do Google no Node-RED](#passo-8--configurar-credenciais-do-google-no-node-red)
+4. [Passo 2 — Configurar variáveis de ambiente (.env)](#passo-2--configurar-vari%C3%A1veis-de-ambiente-env)
+5. [Passo 3 — Configurar Google Sheets](#passo-3--configurar-google-sheets)
+6. [Passo 4 — Criar usuários MQTT](#passo-4--criar-usu%C3%A1rios-mqtt)
+7. [Passo 5 — Subir os serviços com Docker](#passo-5--subir-os-servi%C3%A7os-com-docker)
+8. [Passo 6 — Restaurar o Node-RED](#passo-6--restaurar-o-node-red)
+9. [Passo 7 — Verificar o painel Node-RED](#passo-7--verificar-o-painel-node-red)
+10. [Passo 8 — Configurar credenciais do Google (se necessário)](#passo-8--configurar-credenciais-do-google-se-necess%C3%A1rio)
 11. [Passo 9 — Testar a pipeline](#passo-9--testar-a-pipeline)
-12. [Passo 10 — Conectar o ESP32 (firmware)](#passo-10--conectar-o-esp32-firmware)
+12. [Passo 10 — Conectar o ESP32](#passo-10--conectar-o-esp32)
 13. [Verificando no Google Sheets](#verificando-no-google-sheets)
-14. [Comandos úteis de operação](#comandos-úteis-de-operação)
-15. [Solução de problemas comuns](#solução-de-problemas-comuns)
-16. [Glossário](#glossário)
+14. [Comandos úteis de operação](#comandos-%C3%BAteis-de-opera%C3%A7%C3%A3o)
+15. [Solução de problemas comuns](#solu%C3%A7%C3%A3o-de-problemas-comuns)
+16. [Glossário](#gloss%C3%A1rio)
 
 ---
 
@@ -37,12 +37,38 @@ Este projeto cria um **pipeline de dados IoT** para monitorar temperatura de fer
 
 | Componente | Função |
 |---|---|
-| **ESP32 + DS18B20** | Sensor de temperatura. Lê a temp. e publica via MQTT. |
+| **ESP32 + DS18B20** | Lê a temperatura e publica JSON via MQTT a cada 800ms. |
 | **Mosquitto** | Broker MQTT. Recebe os dados do ESP32 e repassa ao Node-RED. |
-| **Node-RED** | Orquestrador. Valida, enfileira e grava os dados no Sheets. |
-| **Google Sheets** | Banco de dados e visualização dos dados históricos. |
+| **Node-RED** | Faz parse do JSON, valida, enfileira e grava no Google Sheets. |
+| **Google Sheets** | Banco de dados com 3 abas: leituras, eventos e health check. |
 
-O Mosquitto e o Node-RED rodam via **Docker** na sua máquina ou servidor. O ESP32 é configurado separadamente.
+O Mosquitto e o Node-RED rodam via **Docker** na sua máquina. O ESP32 é configurado separadamente.
+
+### Pipeline de dados
+
+```
+ESP32 publica JSON
+  → Mosquitto (broker)
+  → Node-RED: DS18B20 → Parse JSON → Validar → Enfileirar → sensor_readings (Sheets)
+                                                           → event_logs (Sheets)
+                                       → Heartbeat 5min  → health_logs (Sheets)
+```
+
+### Payload publicado pelo ESP32
+
+```json
+{
+  "sensor":           "temperatura",
+  "tempoAtivo":       120,
+  "temperatura":      25.5,
+  "temperatura_alvo": 26,
+  "erros_de_conexao": 0,
+  "saida_pid":        1500.0,
+  "ssr_state":        1,
+  "potencia_esp_w":   0.792,
+  "energia_esp_wh":   0.0264
+}
+```
 
 ---
 
@@ -55,118 +81,104 @@ Instale antes de começar:
 | **Docker Desktop** (Win/Mac) ou **Docker Engine** (Linux) | 24.x | https://docs.docker.com/get-docker/ |
 | **Docker Compose** | v2.x | Incluído no Docker Desktop |
 | **Git** | qualquer | https://git-scm.com/ |
-| **Python** (opcional, só para testes) | 3.10 | https://python.org |
+| **Python** | 3.10+ | https://python.org |
+| **Arduino IDE** ou **PlatformIO** | qualquer | Para gravar o ESP32 |
 
-### Verificar se o Docker está funcionando
+### Verificar Docker
 
-Abra um terminal e rode:
-
-```bash
+```powershell
 docker --version
 docker compose version
 ```
 
-Você deve ver algo como:
+Esperado:
 ```
-Docker version 24.0.6
-Docker Compose version v2.21.0
+Docker version 24.x.x
+Docker Compose version v2.x.x
 ```
-
-Se der erro, o Docker não está instalado corretamente.
 
 ---
 
 ## Passo 1 — Clonar o repositório
 
-Abra o terminal (CMD, PowerShell, Terminal, bash) e rode:
-
-```bash
+```powershell
 git clone https://github.com/Cajuz/brewery-iot.git
 cd brewery-iot
 ```
 
-Você terá esta estrutura de pastas:
+Estrutura do projeto:
 
 ```
 brewery-iot/
-├── .env.example              ← template de configuração
-├── docker-compose.yml        ← define os serviços Docker
+├── .env.example                  ← template de configuração
+├── docker-compose.yml            ← define Mosquitto + Node-RED
 ├── mosquitto/
 │   └── config/
-│       └── mosquitto.conf    ← configuração do broker MQTT
+│       ├── mosquitto.conf        ← configuração do broker
+│       └── passwd                ← usuários MQTT (gerado no Passo 4)
 ├── node-red/
 │   ├── flows/
-│   │   ├── brewery_flow.json     ← flow principal do Node-RED
+│   │   ├── brewery_flow.json     ← flow principal
 │   │   ├── credentials_flow.json ← credenciais criptografadas
-│   │   └── settings.js           ← configuração do Node-RED
+│   │   └── settings.js           ← configurações do Node-RED
 │   └── data/
 │       └── credentials/
 │           └── brewery-iot/
 │               └── service-account.json ← chave Google (não versionada em prod)
+├── codigo esp32/
+│   └── codigo esp32.txt          ← firmware do ESP32
 ├── scripts/
 │   ├── setup_mosquitto_users.sh  ← cria usuários MQTT
 │   └── test_mqtt_connection.py   ← simula o ESP32
 └── docs/
-    └── esp32-mqtt-connection.md  ← contrato para o firmware
+    └── esp32-mqtt-connection.md  ← contrato do firmware
 ```
 
 ---
 
 ## Passo 2 — Configurar variáveis de ambiente (.env)
 
-O arquivo `.env` guarda todas as senhas e configurações. Nunca commite ele no Git em produção.
-
 ### 2.1 — Copiar o template
 
-```bash
-cp .env.example .env
+```powershell
+Copy-Item .env.example .env
 ```
 
-### 2.2 — Editar o .env
+### 2.2 — Abrir e preencher
 
-Abra o arquivo com qualquer editor:
-
-```bash
-# VS Code
-code .env
-
-# Ou no terminal
-nano .env
+```powershell
+code .env   # VS Code
+# ou
+notepad .env
 ```
 
-### 2.3 — Preencher os campos
-
-O arquivo tem esta estrutura. Preencha **todos** os campos marcados com ⚠️:
+### 2.3 — Campos obrigatórios (⚠️)
 
 ```env
 # ─── MOSQUITTO ──────────────────────────────────────────
 MQTT_BROKER_HOST=localhost
 MQTT_BROKER_PORT=1883
-MQTT_WS_PORT=9001
 
-# ⚠️ Senha do ESP32 no broker — crie uma senha forte
+# ⚠️ Senha do ESP32 no broker
 MQTT_ESP32_USER=esp32
-MQTT_ESP32_PASSWORD=MinhaS3nhaForte!
+MQTT_ESP32_PASSWORD=belezafatal
 
-# ⚠️ Senha do Node-RED no broker — crie uma senha forte diferente
+# ⚠️ Senha do Node-RED no broker
 MQTT_NODERED_USER=nodered
-MQTT_NODERED_PASSWORD=OutraS3nha!
+MQTT_NODERED_PASSWORD=victoria321
 
-# Tópico MQTT — não altere, combina com o flow
 MQTT_TOPIC_TEMPERATURE=brewery/sensors/temperature
 
-# ─── NODE-RED ───────────────────────────────────────────
+# ─── NODE-RED ──────────────────────────────────────────
 NODERED_PORT=1880
-
-# ⚠️ Login do painel web do Node-RED
 NODERED_ADMIN_USER=admin
-NODERED_ADMIN_PASSWORD=AdminS3nha!
+NODERED_ADMIN_PASSWORD=admin123
 
-# ⚠️ Chave de criptografia interna — qualquer string longa e aleatória
+# ⚠️ Chave de criptografia — qualquer string longa e aleatória
 NODERED_CREDENTIAL_SECRET=brewery_chave_super_secreta_2026
 
-# ─── GOOGLE SHEETS ──────────────────────────────────────
-# ⚠️ ID da planilha — veja como obter no Passo 3
+# ─── GOOGLE SHEETS ─────────────────────────────────────
+# ⚠️ ID da planilha (da URL do Google Sheets)
 SHEETS_SPREADSHEET_ID=1AbCdEfGhIjKlMnOpQrStUvWxYz1234567890
 SHEETS_CREDENTIALS_PATH=/data/credentials/brewery-iot/service-account.json
 SHEETS_TAB_READINGS=sensor_readings
@@ -184,452 +196,334 @@ SENSOR_TEMP_MIN=-55
 SENSOR_TEMP_MAX=125
 ```
 
-> **Como obter o ID da planilha:** Abra sua planilha no Google Sheets.
-> A URL é `https://docs.google.com/spreadsheets/d/`**`1AbCd...`**`/edit`.
-> O trecho em negrito é o ID.
+> **Como obter o ID da planilha:** Abra o Google Sheets e veja a URL:
+> `https://docs.google.com/spreadsheets/d/`**`SEU_ID_AQUI`**`/edit`
 
 ---
 
-## Passo 3 — Configurar Google Sheets (Service Account)
-
-Este passo autoriza o Node-RED a escrever dados na sua planilha.
+## Passo 3 — Configurar Google Sheets
 
 ### 3.1 — Criar projeto no Google Cloud
 
 1. Acesse https://console.cloud.google.com
-2. Clique em **Select a project** (canto superior esquerdo) → **New Project**
-3. Dê um nome (ex: `brewery-iot`) → clique **Create**
+2. **Select a project** → **New Project** → nome: `brewery-iot` → **Create**
 
-### 3.2 — Ativar a Google Sheets API
+### 3.2 — Ativar Google Sheets API
 
-1. No menu lateral, vá em **APIs & Services** → **Library**
-2. Pesquise `Google Sheets API`
-3. Clique nela → clique **Enable**
+1. **APIs & Services** → **Library**
+2. Pesquise `Google Sheets API` → **Enable**
 
-### 3.3 — Criar a Service Account
+### 3.3 — Criar Service Account
 
-1. Vá em **APIs & Services** → **Credentials**
-2. Clique em **+ Create Credentials** → **Service Account**
-3. Preencha o nome (ex: `brewery-nodered`) → clique **Create and continue**
-4. Em **Role**, selecione **Editor** → clique **Continue** → **Done**
+1. **APIs & Services** → **Credentials** → **+ Create Credentials** → **Service Account**
+2. Nome: `brewery-nodered` → **Create and continue**
+3. Role: **Editor** → **Continue** → **Done**
 
-### 3.4 — Baixar a chave JSON
+### 3.4 — Baixar chave JSON
 
-1. Na lista de Service Accounts, clique na que você criou
-2. Vá na aba **Keys** → **Add Key** → **Create new key**
-3. Selecione **JSON** → clique **Create**
-4. O arquivo será baixado automaticamente (ex: `brewery-iot-abc123.json`)
+1. Clique na Service Account criada → aba **Keys** → **Add Key** → **Create new key** → **JSON**
+2. Salve o arquivo baixado como `service-account.json`
 
-### 3.5 — Salvar a chave no projeto
+### 3.5 — Mover chave para o projeto
 
-Crie a pasta e mova o arquivo:
-
-```bash
-mkdir -p node-red/data/credentials/brewery-iot
-cp ~/Downloads/brewery-iot-abc123.json node-red/data/credentials/brewery-iot/service-account.json
+```powershell
+New-Item -ItemType Directory -Force -Path .\node-red\data\credentials\brewery-iot
+Copy-Item C:\Users\SEU_USUARIO\Downloads\brewery-iot-*.json `
+  .\node-red\data\credentials\brewery-iot\service-account.json
 ```
 
-> ⚠️ **Importante:** O nome do arquivo deve ser exatamente `service-account.json`.
-
-### 3.6 — Criar a planilha, abas e compartilhar
+### 3.6 — Criar planilha e abas
 
 1. Acesse https://sheets.google.com → crie uma nova planilha
-2. **Crie as três abas** com exatamente esses nomes:
+2. Crie **3 abas** com exatamente esses nomes:
    - `sensor_readings`
    - `event_logs`
    - `health_logs`
-3. **Adicione os cabeçalhos** em cada aba (linha 1):
+3. Adicione os cabeçalhos (linha 1) em cada aba:
 
-   **sensor_readings** — colunas A:C
-   | timestamp | temperature | device_id |
-   |---|---|---|
+**sensor_readings** (A:G):
 
-   **event_logs** — colunas A:D
-   | timestamp | event_type | detail | source |
-   |---|---|---|---|
+| timestamp | temperatura | sensor | temperatura_alvo | ssr_state | potencia_esp_w | energia_esp_wh |
+|---|---|---|---|---|---|---|
 
-   **health_logs** — colunas A:H
-   | timestamp | queue_size | last_temp | last_reading_age_s | broker_status | total_readings | total_errors | csv_buffer_lines |
-   |---|---|---|---|---|---|---|---|
+**event_logs** (A:D):
 
-4. Copie o ID da planilha da URL e cole no `.env` no campo `SHEETS_SPREADSHEET_ID`
-5. Clique em **Share** (Compartilhar)
-6. No campo de e-mail, cole o `client_email` do JSON da Service Account
-   - Parece com: `brewery-nodered@brewery-iot-xxxxx.iam.gserviceaccount.com`
-7. Defina permissão como **Editor** → clique **Send**
+| timestamp | event_type | detail | source |
+|---|---|---|---|
 
-> **Por que isso?** O Node-RED vai usar a Service Account para escrever na planilha.
-> Sem o compartilhamento, ele receberá erro 403 (Permission Denied).
+**health_logs** (A:H):
+
+| timestamp | queue_size | last_temp | last_reading_age_s | broker_status | total_readings | total_errors | csv_buffer_lines |
+|---|---|---|---|---|---|---|---|
+
+4. Copie o ID da planilha da URL e cole no `.env` (`SHEETS_SPREADSHEET_ID`)
+5. **Share** (Compartilhar) → cole o `client_email` do JSON → **Editor** → **Send**
 
 ---
 
 ## Passo 4 — Criar usuários MQTT
 
-Este script cria as senhas criptografadas para o broker Mosquitto.
+Este passo cria o arquivo `mosquitto/config/passwd` com as senhas criptografadas.
 
-### No Linux/macOS:
-
-```bash
-bash scripts/setup_mosquitto_users.sh
-```
-
-### No Windows (PowerShell):
+> ⚠️ **Execute os dois comandos na ordem.** O `-c` no primeiro comando **cria** o arquivo.
+> Se você rodar o segundo com `-c`, apaga o primeiro usuário.
 
 ```powershell
-# Primeiro usuário — flag -c CRIA o arquivo
+# 1º — cria o arquivo e adiciona esp32
 docker run --rm -v "${PWD}/mosquitto/config:/mosquitto/config" `
   eclipse-mosquitto:2.0 `
   mosquitto_passwd -b -c /mosquitto/config/passwd esp32 belezafatal
 
-# Segundo usuário — sem -c, apenas ADICIONA ao arquivo existente
+# 2º — adiciona nodered ao arquivo existente (sem -c)
 docker run --rm -v "${PWD}/mosquitto/config:/mosquitto/config" `
   eclipse-mosquitto:2.0 `
   mosquitto_passwd -b /mosquitto/config/passwd nodered victoria321
 ```
 
-> ⚠️ **Importante:** Use `-c` apenas no primeiro comando. O `-c` cria o arquivo do zero — se usado no segundo comando, apaga o primeiro usuário.
+Confirmar que o arquivo foi criado:
 
-Substitua `SUA_SENHA_ESP32` e `SUA_SENHA_NODERED` pelas mesmas senhas do `.env`. Use senhas simples **sem caracteres especiais** (`!`, `@`, `#`) para evitar problemas de escape no PowerShell.
-
-Verifique que o arquivo foi criado:
-
-```bash
-ls -la mosquitto/config/passwd
-# Deve existir e ter conteúdo
+```powershell
+Get-Content .\mosquitto\config\passwd
 ```
+
+Deve mostrar duas linhas iniciando com `esp32:` e `nodered:`.
+
+> ⚠️ Use as **mesmas senhas** do `.env`. Para recriar, rode os dois comandos novamente.
 
 ---
 
 ## Passo 5 — Subir os serviços com Docker
 
-```bash
+```powershell
 docker compose up -d
 ```
 
-Este comando baixa as imagens (só na primeira vez) e sobe os containers em background.
+Aguarde ~30 segundos e verifique:
 
-### Verificar se está tudo rodando:
-
-```bash
+```powershell
 docker compose ps
 ```
 
-Você deve ver:
+Esperado:
 
 ```
-NAME                 STATUS          PORTS
-brewery_mosquitto    Up (healthy)    0.0.0.0:1883->1883/tcp
-brewery_nodered      Up (healthy)    0.0.0.0:1880->1880/tcp
+NAME                STATUS          PORTS
+brewery_mosquitto   Up (healthy)    0.0.0.0:1883->1883/tcp
+brewery_nodered     Up (healthy)    0.0.0.0:1880->1880/tcp
 ```
 
-Ambos precisam mostrar **healthy**. Se mostrar **starting**, espere 30 segundos e rode novamente.
+Se algum mostrar `unhealthy`, veja os logs:
 
-### Ver os logs em tempo real:
-
-```bash
-docker compose logs -f
+```powershell
+docker compose logs mosquitto --tail 20
+docker compose logs nodered --tail 20
 ```
-
-Para parar de ver os logs: `Ctrl+C`
 
 ---
 
-## Passo 6 — Restaurar o Node-RED (flow + credenciais)
+## Passo 6 — Restaurar o Node-RED
 
-> Este é o método **rápido** para recriar o Node-RED exatamente como estava configurado,
-> usando os arquivos versionados no repositório.
-> Se preferir configurar tudo manualmente do zero, pule para o Passo 7.
-
-### 6.1 — Copiar os arquivos do repositório para o volume
-
-No PowerShell, na raiz do projeto:
+Com os arquivos já versionados no repositório, basta copiar para o volume e reiniciar:
 
 ```powershell
-# Flow principal
-Copy-Item .\node-red\flows\brewery_flow.json .\node-red\data\flows.json
-
-# Credenciais criptografadas dos nós
+# Copia flow, credenciais e settings para o volume do Node-RED
+Copy-Item .\node-red\flows\brewery_flow.json    .\node-red\data\flows.json
 Copy-Item .\node-red\flows\credentials_flow.json .\node-red\data\flows_cred.json
+Copy-Item .\node-red\flows\settings.js          .\node-red\data\settings.js
 
-# Settings do Node-RED (porta, chave de criptografia, etc.)
-Copy-Item .\node-red\flows\settings.js .\node-red\data\settings.js
-```
-
-### 6.2 — Restaurar os pacotes npm (nodes extras)
-
-Se o repositório contiver `node-red/data/package.json`, os nodes extras (como `node-red-contrib-google-spreadsheet`) serão reinstalados automaticamente na próxima subida do container.
-
-Confirma se o arquivo existe:
-
-```powershell
-dir .\node-red\data\package.json
-```
-
-Se existir, o Node-RED instala os pacotes sozinho ao subir. Se não existir, instale manualmente conforme o Passo 7.
-
-### 6.3 — Reiniciar o Node-RED
-
-```powershell
+# Reinicia o Node-RED para carregar os arquivos
 docker compose restart nodered
 ```
 
-Aguarde 30 segundos e verifique os logs:
+Aguarde ~30 segundos e veja os logs:
 
 ```powershell
 docker compose logs --tail 30 nodered
 ```
 
-Resultado esperado (sem erros):
+Resultado esperado:
 
 ```
-Starting flows
 Started flows
 [mqtt-broker:Mosquitto Docker] Connected to broker: nodered-brewery@mqtt://mosquitto:1883
 ```
 
-### 6.4 — Verificar o flow no painel
-
-Abra **http://localhost:1880** e confirme:
-
-- A aba **Brewery IoT** aparece com os 3 pipelines (sensor_readings, event_logs, health_logs)
-- O nó **DS18B20** mostra badge **"conectado"**
-- Os nós Google Sheets não mostram badge de erro
-
-> ⚠️ **Atenção:** O arquivo `flows_cred.json` é criptografado com a chave definida em `settings.js`
-> (`credentialSecret`). Se você trocar o `settings.js` ou o `credentialSecret`, as credenciais
-> dos nós serão invalidadas e você precisará reconfigurar manualmente os campos de
-> usuário/senha no Node-RED.
+> ⚠️ Se aparecer `Failed to decrypt credentials`, o `credentialSecret` no `settings.js` está diferente do que foi usado para gerar o `credentials_flow.json`. Nesse caso siga o Passo 8 para reconfigurar manualmente.
 
 ---
 
-## Passo 7 — Importar o Flow no Node-RED (alternativa manual)
+## Passo 7 — Verificar o painel Node-RED
 
-> Siga este passo apenas se **não** fez o Passo 6 (restore automático).
+1. Abra o navegador em: **http://localhost:1880**
+2. Faça login com `NODERED_ADMIN_USER` / `NODERED_ADMIN_PASSWORD` do `.env`
+3. Confirme que a aba **Brewery IoT** está visível com os nós:
 
-### 7.1 — Acessar o painel
+```
+DS18B20 → Parse JSON ESP32 → Validar DS18B20 → Enfileirar → sensor_readings
+                                                            → event_logs
+Heartbeat 5min → Health Check → health_logs
+```
 
-Abra o browser em: **http://localhost:1880**
+4. O nó **DS18B20** deve mostrar badge `conectado`
+5. Nenhum nó deve ter triângulo de erro ⚠️
 
-Faça login com `NODERED_ADMIN_USER` e `NODERED_ADMIN_PASSWORD` definidos no `.env`.
-
-### 7.2 — Instalar o pacote Google Sheets
-
-Antes de importar o flow, instale o pacote necessário:
-
-1. Clique no ≡ (menu hambúrguer) → **Gerenciar paleta**
-2. Vá na aba **Instalar**
-3. Pesquise `node-red-contrib-google-spreadsheet`
-4. Clique **Instalar** e aguarde 1-2 minutos
-
-### 7.3 — Importar o flow
-
-1. No canto superior direito, clique no ≡ (menu hambúrguer)
-2. Clique em **Import**
-3. Clique em **select a file to import**
-4. Navegue até `node-red/flows/brewery_flow.json` na pasta do projeto
-5. Clique **Import**
-
-Você verá o flow `Brewery IoT` aparecer na tela com os nós conectados.
+Se houver erro nos nós do Google Sheets, siga o Passo 8.
 
 ---
 
-## Passo 8 — Configurar credenciais do Google no Node-RED
+## Passo 8 — Configurar credenciais do Google (se necessário)
 
-> Se você fez o restore do Passo 6 com sucesso e não aparece erro nos nós Sheets, pode pular este passo.
+> Pule este passo se o restore do Passo 6 funcionou sem erros nos nós Sheets.
 
-### 8.1 — Abrir as configurações do nó Sheets
+### 8.1 — Abrir configurações da Service Account
 
-1. No flow importado, clique duas vezes no nó **`sensor_readings`** (verde, no meio do flow)
-2. Na janela que abrir, clique no ícone de lápis ✏️ ao lado do campo **Credentials**
+1. No flow, clique duas vezes no nó **sensor_readings**
+2. Clique no lápis ✏️ ao lado do campo **Credentials**
 
-### 8.2 — Preencher os campos da Service Account
+### 8.2 — Preencher com os dados do JSON
 
-Abra o arquivo `node-red/data/credentials/brewery-iot/service-account.json` e copie os valores:
+No PowerShell, para ver os valores:
 
 ```powershell
-# No PowerShell, para ver o conteúdo formatado:
 $json = Get-Content ".\node-red\data\credentials\brewery-iot\service-account.json" | ConvertFrom-Json
-$json.client_email
-$json.private_key
+Write-Host "client_email: " $json.client_email
+Write-Host "project_id:   " $json.project_id
+# private_key é longa, copie diretamente do arquivo
 ```
 
 | Campo no Node-RED | Campo no JSON |
 |---|---|
 | `project_id` | `"project_id"` |
-| `private_key` | `"private_key"` (incluindo `-----BEGIN PRIVATE KEY-----`) |
+| `private_key` | `"private_key"` (inclui `-----BEGIN PRIVATE KEY-----`) |
 | `client_email` | `"client_email"` |
 
-> ⚠️ **Atenção:** A chave deve começar com `-----BEGIN PRIVATE KEY-----` (sem `RSA`).
+3. Clique **Update** → **Done**
 
-4. Clique **Update** → **Done**
+### 8.3 — Configurar broker MQTT (se necessário)
 
-### 8.3 — Configurar o broker MQTT no nó DS18B20
-
-1. Clique duas vezes no nó **DS18B20** (roxo, à esquerda)
-2. Clique no lápis ✏️ ao lado do campo **Servidor**
-3. Na aba **Conexão**, preencha **Servidor** com `mosquitto` e **Porta** com `1883`
-4. Na aba **Segurança**, preencha:
-   - **Usuário:** `nodered`
-   - **Senha:** a senha definida no Passo 4
-5. Clique **Atualizar** → **Done**
-
-### 8.4 — Fazer Deploy
-
-Clique no botão vermelho **Implementar** no canto superior direito.
-
-Você deve ver a mensagem `Implementado com sucesso` e o nó DS18B20 mostrando **"conectado"**.
+1. Clique duas vezes no nó **DS18B20**
+2. Lápis ✏️ ao lado de **Servidor**
+3. Aba **Conexão**: Servidor = `mosquitto`, Porta = `1883`
+4. Aba **Segurança**: Usuário = `nodered`, Senha = `victoria321`
+5. **Atualizar** → **Done** → **Implementar** (botão vermelho)
 
 ---
 
 ## Passo 9 — Testar a pipeline
 
-### Opção A — Script Python (recomendado)
-
-```bash
-# Instalar dependências (só na primeira vez)
-pip install -r requirements.txt
-
-# Rodar o simulador
-python scripts/test_mqtt_connection.py
-```
-
-A saída deve ser:
-
-```
-=======================================================
-  BREWERY IoT — Teste de Conexão MQTT
-  Broker : localhost:1883
-  Usuário: esp32
-  Tópico : brewery/sensors/temperature
-=======================================================
-✅ Conectado ao broker localhost:1883
-📡 Subscrito em: brewery/sensors/temperature
-📤 Publicando payload de teste...
-✅ Publicação confirmada (mid=1)
-⏳ Aguardando mensagem de volta por 3s...
-📥 Mensagem recebida:
-   Tópico : brewery/sensors/temperature
-   QoS    : 1
-   Payload: 23.5
-✅ Teste concluído! 1 mensagem(ns) recebida(s).
-```
-
-### Opção B — Linha de comando (PowerShell)
+### Opção A — Script Python
 
 ```powershell
-$payload = '23.5'
+pip install -r requirements.txt
+python .\scripts\test_mqtt_connection.py
+```
+
+### Opção B — mosquitto_pub com JSON completo
+
+```powershell
+$payload = '{"sensor":"temperatura","tempoAtivo":120,"temperatura":23.5,"temperatura_alvo":25,"erros_de_conexao":0,"saida_pid":1500.0,"ssr_state":0,"potencia_esp_w":0.792,"energia_esp_wh":0.026}'
+
 docker run --rm eclipse-mosquitto:2.0 mosquitto_pub `
   -h host.docker.internal -p 1883 `
-  -u esp32 -P SUA_SENHA_ESP32 `
+  -u esp32 -P belezafatal `
   -t brewery/sensors/temperature `
   -m $payload `
   -q 1
 ```
 
-> ⚠️ O flow espera receber **apenas o número** da temperatura (ex: `23.5`), não um objeto JSON completo.
+Verifique no Node-RED (`http://localhost:1880`):
 
-### Verificar no Node-RED
-
-Após publicar, no painel http://localhost:1880:
-
-- O nó **DS18B20** deve mostrar badge com a temperatura
-- O nó **Validar DS18B20** deve mostrar badge verde com `23.5°C`
-- O nó **Enfileirar** deve mostrar `fila: 0` (já processou)
-- O nó **sensor_readings** deve mostrar status verde
+- Nó **Parse JSON ESP32** — sem erro
+- Nó **Validar DS18B20** — badge verde `23.5°C | ssr:0`
+- Nó **Enfileirar** — badge `fila: 0`
+- Nó **sensor_readings** — badge verde
 
 ---
 
-## Passo 10 — Conectar o ESP32 (firmware)
+## Passo 10 — Conectar o ESP32
 
-O firmware do ESP32 é desenvolvido separadamente no Arduino IDE ou PlatformIO. Configure com os valores do seu `.env`:
+Veja o contrato completo em [`docs/esp32-mqtt-connection.md`](docs/esp32-mqtt-connection.md).
 
-| Parâmetro no firmware | Valor |
-|---|---|
-| `MQTT_SERVER` | IP da máquina onde o Docker está rodando |
-| `MQTT_PORT` | `1883` |
-| `MQTT_USER` | valor de `MQTT_ESP32_USER` no .env |
-| `MQTT_PASSWORD` | valor de `MQTT_ESP32_PASSWORD` no .env |
-| `MQTT_TOPIC` | `brewery/sensors/temperature` |
+### Configurações rápidas no firmware
 
-### Formato do payload que o ESP32 deve publicar
+1. Descubra o IP do host:
 
-```
-23.5
-```
-
-> ⚠️ O flow espera receber **apenas o valor numérico** da temperatura, não um objeto JSON.
-
-### Descobrir o IP da máquina host
-
-```bash
-# Linux/macOS
-hostname -I | awk '{print $1}'
-
-# Windows
+```powershell
 ipconfig
-# Procure por "IPv4 Address"
+# Procure IPv4 Address do Wi-Fi ou Ethernet
+```
+
+2. No arquivo `codigo esp32/codigo esp32.txt`, altere:
+
+```cpp
+const char* WIFI_SSID     = "NOME_DA_SUA_REDE";
+const char* WIFI_PASSWORD = "SENHA_DA_SUA_REDE";
+const char* MQTT_BROKER   = "192.168.x.x";   // IPv4 do host
+const char* MQTT_USER     = "esp32";
+const char* MQTT_PASSWORD = "belezafatal";
+```
+
+3. Compile e grave no ESP32 (Arduino IDE ou PlatformIO)
+4. Abra o Serial Monitor (115200 baud) e confirme:
+
+```
+WiFi conectado — IP: 192.168.x.x
+Conectando ao MQTT... OK
+{"sensor":"temperatura","temperatura":25.5,...}
+MQTT publish [brewery/sensors/temperature]: OK
 ```
 
 ---
 
 ## Verificando no Google Sheets
 
-Após o teste, abra a planilha no Google Sheets.
+Abra a planilha e confira as 3 abas:
 
-**Aba `sensor_readings`** — nova linha a cada leitura do ESP32:
+**sensor_readings** — linha a cada leitura do ESP32:
 
-| timestamp | temperature | device_id |
-|---|---|---|
-| 2026-04-25T23:21:00Z | 23.5 | DS18B20 |
+| timestamp | temperatura | sensor | temperatura_alvo | ssr_state | potencia_esp_w | energia_esp_wh |
+|---|---|---|---|---|---|---|
+| 2026-04-27T20:00:00Z | 25.5 | temperatura | 25 | 0 | 0.792 | 0.026 |
 
-**Aba `event_logs`** — registra eventos do sistema:
+**event_logs** — eventos do sistema:
 
 | timestamp | event_type | detail | source |
 |---|---|---|---|
-| 2026-04-25T23:21:15Z | MQTT_CONNECTED | nodered-brewery@mosquitto:1883 | mqtt-broker |
-| 2026-04-25T23:22:00Z | SENSOR_INVALID | Valor fora do range: 999 | n-validate |
+| 2026-04-27T20:00:05Z | MQTT_CONNECTED | nodered-brewery@mosquitto:1883 | mqtt-broker |
 
-**Aba `health_logs`** — heartbeat a cada 5 minutos:
+**health_logs** — heartbeat a cada 5 minutos:
 
 | timestamp | queue_size | last_temp | last_reading_age_s | broker_status | total_readings | total_errors | csv_buffer_lines |
 |---|---|---|---|---|---|---|---|
-| 2026-04-25T23:25:00Z | 0 | 23.5 | 10 | connected | 42 | 0 | 0 |
-
-Se os dados não aparecerem em até 30 segundos, veja a seção [Solução de problemas](#solução-de-problemas-comuns).
+| 2026-04-27T20:05:00Z | 0 | 25.5 | 10 | connected | 42 | 0 | 0 |
 
 ---
 
 ## Comandos úteis de operação
 
-```bash
-# Ver status dos containers
+```powershell
+# Status dos containers
 docker compose ps
 
-# Ver logs em tempo real (todos os serviços)
+# Logs em tempo real
 docker compose logs -f
-
-# Ver logs só do Node-RED
 docker compose logs -f nodered
-
-# Ver logs só do Mosquitto
 docker compose logs -f mosquitto
 
-# Reiniciar apenas o Node-RED
+# Reiniciar serviço específico
 docker compose restart nodered
+docker compose restart mosquitto
 
 # Parar tudo
 docker compose down
 
-# Parar e apagar volumes (CUIDADO: apaga dados)
+# Parar e apagar volumes (CUIDADO: apaga dados do Node-RED)
 docker compose down -v
 
-# Ver logs das últimas 50 linhas
-docker compose logs --tail=50
-
 # Salvar estado atual do Node-RED no repositório
-Copy-Item .\node-red\data\flows.json        .\node-red\flows\brewery_flow.json
-Copy-Item .\node-red\data\flows_cred.json   .\node-red\flows\credentials_flow.json
-Copy-Item .\node-red\data\settings.js       .\node-red\flows\settings.js
+Copy-Item .\node-red\data\flows.json       .\node-red\flows\brewery_flow.json
+Copy-Item .\node-red\data\flows_cred.json  .\node-red\flows\credentials_flow.json
+Copy-Item .\node-red\data\settings.js      .\node-red\flows\settings.js
 git add node-red/flows/
 git commit -m "chore: salva estado atual do Node-RED"
 git push
@@ -639,48 +533,41 @@ git push
 
 ## Solução de problemas comuns
 
-### ❌ `docker compose ps` mostra status `unhealthy`
+### ❌ `docker compose ps` mostra `unhealthy`
 
-**Causa:** o container subiu mas o health check falhou.
-
-```bash
-docker compose logs mosquitto
-docker compose logs nodered
+```powershell
+docker compose logs mosquitto --tail 20
 ```
 
-Verifique se o arquivo `mosquitto/config/passwd` existe (Passo 4 não foi executado).
+Provavelmente o `mosquitto/config/passwd` não existe. Refaz o Passo 4.
 
 ---
 
-### ❌ Node-RED mostra "Waiting for missing types"
+### ❌ Node-RED: `Waiting for missing types`
 
-**Causa:** pacote npm não instalado.
+Pacote npm não instalado. No painel http://localhost:1880:
 
-Instale via **Gerenciar paleta** → aba **Instalar** → pesquise `node-red-contrib-google-spreadsheet` → clique **Instalar**.
+**Menu (≡) → Gerenciar paleta → Instalar →** pesquise `node-red-contrib-google-spreadsheet` → **Instalar**
 
 ---
 
 ### ❌ Erro 403 no Google Sheets
 
-**Causa:** planilha não compartilhada com a Service Account.
+Planilha não compartilhada com a Service Account.
 
-1. Abra o arquivo `node-red/data/credentials/brewery-iot/service-account.json`
-2. Copie o valor do campo `client_email`
-3. Abra a planilha no Google Sheets → Share → cole o e-mail → Editor → Send
+1. Abra `node-red/data/credentials/brewery-iot/service-account.json`
+2. Copie o `client_email`
+3. Na planilha: **Share** → cole o e-mail → **Editor** → **Send**
 
 ---
 
-### ❌ Erro 401 / JWT authorization failed / Headers is not defined
+### ❌ JWT authorization failed / Headers is not defined
 
-**Causa:** versão do Node.js incompatível (abaixo do 18) com a biblioteca JWT.
-
-Atualize a imagem do Node-RED no `docker-compose.yml`:
+Versão do Node.js abaixo do 18. Atualize a imagem no `docker-compose.yml`:
 
 ```yaml
 image: nodered/node-red:3.1-18
 ```
-
-Depois:
 
 ```powershell
 docker compose down
@@ -690,44 +577,37 @@ docker compose up -d
 
 ---
 
-### ❌ Dados não aparecem na planilha (fallback CSV)
+### ❌ ESP32 Serial: `MQTT não conectado — publicação ignorada`
 
-**Causa:** nome da aba da planilha incorreto.
+A task de MQTT ainda não completou a conexão. Aguarde 15–20 segundos. Se persistir:
 
-Verifique se as abas se chamam exatamente `sensor_readings`, `event_logs` e `health_logs` (sem maiúsculas, sem espaços).
-
----
-
-### ❌ Script Python falha com "Bad credentials"
-
-**Causa:** senha no `.env` não bate com o `mosquitto/config/passwd`.
-
-Refaça o Passo 4 com a mesma senha. Use senhas sem caracteres especiais no PowerShell.
-
----
-
-### ❌ Script Python falha com "Connection refused"
-
-**Causa:** Mosquitto não está rodando.
-
-```bash
-docker compose up -d
-docker compose ps
+```powershell
+# Teste a conexão do broker com as mesmas credenciais do ESP32
+docker run --rm eclipse-mosquitto:2.0 mosquitto_pub `
+  -h 192.168.x.x -p 1883 `
+  -u esp32 -P belezafatal `
+  -t brewery/sensors/temperature `
+  -m "teste" -q 1
 ```
 
+- Se **funcionar** → problema de rede entre o ESP32 e o PC (redes diferentes?)
+- Se **falhar** → problema no Mosquitto ou nas credenciais → refaz o Passo 4
+
+Consulte o diagnóstico completo em [`docs/esp32-mqtt-connection.md`](docs/esp32-mqtt-connection.md).
+
 ---
 
-### ❌ No Windows: `bash scripts/setup_mosquitto_users.sh` não funciona
+### ❌ Dados não aparecem na planilha (fallback CSV)
 
-Use o Git Bash (instalado junto com o Git) ou siga a Opção B do Passo 4 com PowerShell.
+Nome da aba incorreto. Confirme que as abas se chamam exatamente:
+`sensor_readings`, `event_logs`, `health_logs`
 
 ---
 
-### ❌ Após restore, Node-RED não carrega as credenciais
+### ❌ Após restore, credenciais não carregam
 
-**Causa:** o `credentialSecret` no `settings.js` restaurado é diferente do que foi usado para criptografar o `flows_cred.json`.
-
-Solução: reconfigure as credenciais manualmente seguindo o Passo 8.
+O `credentialSecret` no `settings.js` restaurado diverge do original.
+Solucione recobrindo as credenciais manualmente no Passo 8.
 
 ---
 
@@ -735,16 +615,16 @@ Solução: reconfigure as credenciais manualmente seguindo o Passo 8.
 
 | Termo | Definição |
 |---|---|
-| **MQTT** | Protocolo de mensagens leve para IoT. Funciona no modelo publish/subscribe. |
-| **Broker** | Servidor MQTT que recebe e distribui as mensagens. Aqui é o Mosquitto. |
-| **Topic (Tópico)** | Endereço da mensagem no MQTT. Ex: `brewery/sensors/temperature`. |
-| **QoS 1** | Nível de qualidade MQTT: garante entrega ao menos uma vez. |
-| **Node-RED** | Plataforma visual de automação. Os "flows" são os programas visuais. |
-| **Flow** | Conjunto de nós conectados no Node-RED que processam os dados. |
-| **Service Account** | Conta do Google usada por aplicações (não humanos) para acessar APIs. |
-| **Docker Compose** | Ferramenta que sobe múltiplos containers Docker com um único comando. |
-| **Container** | Ambiente isolado onde um serviço roda (Mosquitto, Node-RED). |
-| **DS18B20** | Sensor de temperatura digital da Dallas/Maxim. Range: −55°C a +125°C. |
-| **ESP32** | Microcontrolador com WiFi da Espressif. Lê o sensor e publica via MQTT. |
-| **flows_cred.json** | Arquivo com credenciais dos nós Node-RED, criptografado com o `credentialSecret`. |
-| **credentialSecret** | Chave de criptografia definida no `settings.js` do Node-RED. |
+| **MQTT** | Protocolo leve de mensagens IoT (publish/subscribe). |
+| **Broker** | Servidor que recebe e distribui mensagens MQTT. Aqui é o Mosquitto. |
+| **Tópico** | Endereço da mensagem. Ex: `brewery/sensors/temperature`. |
+| **QoS 1** | Garante entrega ao menos uma vez. |
+| **Node-RED** | Plataforma visual de automação. |
+| **Flow** | Conjunto de nós conectados que processam dados. |
+| **Service Account** | Conta do Google para aplicações acessarem APIs. |
+| **Docker Compose** | Sobe múltiplos containers com um comando. |
+| **DS18B20** | Sensor de temperatura digital. Range: −55°C a +125°C. |
+| **ESP32** | Microcontrolador WiFi da Espressif. Lê o sensor e publica via MQTT. |
+| **SSR** | Solid State Relay. Controla aquecimento via sinal do PID. |
+| **PID** | Algoritmo de controle (Proporcional-Integral-Derivativo). |
+| **credentialSecret** | Chave de criptografia do Node-RED para o `flows_cred.json`. |
