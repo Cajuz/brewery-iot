@@ -279,12 +279,12 @@ bash scripts/setup_mosquitto_users.sh
 # Primeiro usuário — flag -c CRIA o arquivo
 docker run --rm -v "${PWD}/mosquitto/config:/mosquitto/config" `
   eclipse-mosquitto:2.0 `
-  mosquitto_passwd -b -c /mosquitto/config/passwd esp32 SUA_SENHA_ESP32
+  mosquitto_passwd -b -c /mosquitto/config/passwd esp32 belezafatal
 
 # Segundo usuário — sem -c, apenas ADICIONA ao arquivo existente
 docker run --rm -v "${PWD}/mosquitto/config:/mosquitto/config" `
   eclipse-mosquitto:2.0 `
-  mosquitto_passwd -b /mosquitto/config/passwd nodered SUA_SENHA_NODERED
+  mosquitto_passwd -b /mosquitto/config/passwd nodered victoria321
 ```
 
 > ⚠️ **Importante:** Use `-c` apenas no primeiro comando. O `-c` cria o arquivo do zero — se usado no segundo comando, apaga o primeiro usuário.
